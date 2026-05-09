@@ -4,43 +4,19 @@ Browser automation for AI agents, powered by [chrome-devtools-mcp](https://githu
 
 ## What is this?
 
-A skill + thin wrapper that lets any AI agent control a Chrome browser via MCP tools. The agent gets native tool calls (`navigate_page`, `take_snapshot`, `click`, `fill`, etc.) instead of parsing CLI output.
+A thin wrapper that lets AI agents control Chrome via native MCP tool calls (`navigate_page`, `take_snapshot`, `click`, `fill`, etc.). No custom code — just config-driven orchestration of `chrome-devtools-mcp`.
 
-## Architecture
-
-```
-Agent (Claude Code / Cursor / etc.)
-  ↓ MCP tool calls
-start-mcp.sh (wrapper)
-  ↓ ensures Chrome is running, reads config, exec's:
-chrome-devtools-mcp
-  ↓ CDP protocol
-Chrome (persistent, headless or visible)
-```
-
-## Quick Start
+## Install
 
 ```bash
-# 1. Clone
 git clone https://github.com/briqt/my-agent-browser.git ~/.my-agent-browser
-
-# 2. Create config
-cp ~/.my-agent-browser/config.example.json ~/.my-agent-browser/config.json
-# Edit as needed (port, proxy, headless, etc.)
-
-# 3. Add MCP server to your agent (Claude Code example)
+cd ~/.my-agent-browser && bash install.sh
 ```
 
-In `~/.claude/settings.json`:
-```json
-{
-  "mcpServers": {
-    "browser": {
-      "command": "/home/you/.my-agent-browser/scripts/start-mcp.sh"
-    }
-  }
-}
-```
+The installer will:
+1. Install `chrome-devtools-mcp` globally
+2. Create `~/.my-agent-browser/config.json`
+3. Print the MCP server config to add to your agent
 
 ## Configuration
 
@@ -49,37 +25,53 @@ In `~/.claude/settings.json`:
 ```json
 {
   "browser": {
+    "userDataDir": "~/.my-agent-browser/user-data",
     "headless": true,
-    "noSandbox": true,
-    "cdpPort": 19333,
-    "userDataDir": "~/.my-agent-browser/profiles/default/user-data",
     "proxy": "",
+    "viewport": "1280x720",
     "extraArgs": []
   },
   "mcp": {
-    "command": "npx",
-    "args": ["-y", "chrome-devtools-mcp@latest"],
     "features": [],
     "flags": []
   }
 }
 ```
 
-## Manual Chrome Control
+### Anti-detection example
 
-```bash
-./scripts/browser.sh start    # Launch Chrome
-./scripts/browser.sh status   # Check if running
-./scripts/browser.sh stop     # Stop Chrome
+```json
+{
+  "browser": {
+    "extraArgs": [
+      "--disable-blink-features=AutomationControlled",
+      "--disable-infobars",
+      "--disable-dev-shm-usage"
+    ]
+  }
+}
 ```
 
-## How Agents Use It
+## How it works
 
-Once configured as an MCP server, agents get these tools natively:
+```
+Agent (Claude Code / Cursor / etc.)
+  ↓ MCP tool calls (native)
+start-mcp.sh
+  ↓ reads config.json, builds args, exec's:
+chrome-devtools-mcp
+  ↓ launches & controls Chrome via CDP
+Chrome
+```
 
-1. `navigate_page { url }` — Go to a page
-2. `take_snapshot` — See page structure with uid refs
-3. `click { uid }` / `fill { uid, value }` — Interact with elements
-4. `wait_for { text }` — Wait for content
+- Chrome is launched by `chrome-devtools-mcp` on first use (not pre-started)
+- Config changes take effect on next agent session
+- `browser.sh` is available for manual Chrome lifecycle control
 
-See [SKILL.md](SKILL.md) for the full workflow guide.
+## Manual Chrome control
+
+```bash
+~/.my-agent-browser/scripts/browser.sh start
+~/.my-agent-browser/scripts/browser.sh status
+~/.my-agent-browser/scripts/browser.sh stop
+```

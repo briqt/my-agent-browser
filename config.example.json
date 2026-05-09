@@ -1,16 +1,12 @@
 {
   "browser": {
-    "executablePath": null,
+    "userDataDir": "~/.my-agent-browser/user-data",
     "headless": true,
-    "noSandbox": true,
-    "cdpPort": 19333,
-    "userDataDir": "~/.my-agent-browser/profiles/default/user-data",
     "proxy": "",
+    "viewport": "1280x720",
     "extraArgs": []
   },
   "mcp": {
-    "command": "npx",
-    "args": ["-y", "chrome-devtools-mcp@latest"],
     "features": [],
     "flags": []
   }
