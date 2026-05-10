@@ -30,13 +30,13 @@ else
   echo "  → Config already exists: $CONFIG_DIR/config.json"
 fi
 
-# 3. Ensure start-mcp.sh is executable
-if [[ -f "$SKILL_DIR/scripts/start-mcp.sh" ]]; then
-  chmod +x "$SKILL_DIR/scripts/start-mcp.sh"
+# 3. Ensure start-mcp.js is executable
+if [[ -f "$SKILL_DIR/scripts/start-mcp.js" ]]; then
+  chmod +x "$SKILL_DIR/scripts/start-mcp.js"
 fi
 
 # 4. Print MCP server config
-SCRIPT_PATH="$SKILL_DIR/scripts/start-mcp.sh"
+SCRIPT_PATH="$SKILL_DIR/scripts/start-mcp.js"
 
 echo ""
 echo "Done! Add this to your agent's MCP server config:"
@@ -44,14 +44,16 @@ echo ""
 echo "  Claude Code (~/.claude/settings.json):"
 echo "    \"mcpServers\": {"
 echo "      \"browser\": {"
-echo "        \"command\": \"$SCRIPT_PATH\""
+echo "        \"command\": \"node\","
+echo "        \"args\": [\"$SCRIPT_PATH\"]"
 echo "      }"
 echo "    }"
 echo ""
 echo "  Cursor (.cursor/mcp.json):"
 echo "    \"mcpServers\": {"
 echo "      \"browser\": {"
-echo "        \"command\": \"$SCRIPT_PATH\""
+echo "        \"command\": \"node\","
+echo "        \"args\": [\"$SCRIPT_PATH\"]"
 echo "      }"
 echo "    }"
 echo ""

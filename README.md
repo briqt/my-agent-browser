@@ -21,7 +21,8 @@ Then add the MCP server to your agent's config (Claude Code example):
 {
   "mcpServers": {
     "browser": {
-      "command": "~/.agents/skills/my-agent-browser/scripts/start-mcp.sh"
+      "command": "node",
+      "args": ["~/.agents/skills/my-agent-browser/scripts/start-mcp.js"]
     }
   }
 }
@@ -34,8 +35,8 @@ See [skills/my-agent-browser/references/setup.md](skills/my-agent-browser/refere
 ```
 Agent (Claude Code / Cursor / Kiro / etc.)
   ↓ MCP tool calls (native)
-start-mcp.sh
-  ↓ reads ~/.my-agent-browser/config.json, builds args, exec's:
+start-mcp.js
+  ↓ reads ~/.my-agent-browser/config.json, builds args, spawns:
 chrome-devtools-mcp
   ↓ launches & controls Chrome via CDP
 Chrome
@@ -51,7 +52,7 @@ Chrome
 ├── skills/my-agent-browser/     # Skill package (installed via npx skills add)
 │   ├── SKILL.md                 # Agent workflow guide
 │   ├── scripts/
-│   │   └── start-mcp.sh        # MCP server wrapper
+│   │   └── start-mcp.js        # MCP server wrapper (cross-platform Node.js)
 │   ├── config.example.json      # Config template
 │   └── references/
 │       ├── setup.md             # Installation & configuration

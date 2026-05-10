@@ -41,10 +41,10 @@ Check:
 
 ### MCP server connection failed
 
-The `start-mcp.sh` wrapper couldn't launch chrome-devtools-mcp. Check:
+The `start-mcp.js` wrapper couldn't launch chrome-devtools-mcp. Check:
 1. Is `chrome-devtools-mcp` installed? (`chrome-devtools-mcp --version`)
 2. If not: `npm install -g chrome-devtools-mcp@latest`
-3. Is python3 available? (needed for config parsing)
+3. Is Node.js 20+ available? (`node --version`)
 
 ### Page loads but snapshot is empty or minimal
 

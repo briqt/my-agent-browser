@@ -3,8 +3,7 @@
 ## Prerequisites
 
 - Google Chrome, Chromium, or Microsoft Edge installed
-- Node.js 18+ (for npm)
-- python3 (for config parsing in wrapper script)
+- Node.js 20+ (for npm and the MCP wrapper script)
 
 ## Installation
 
@@ -14,7 +13,7 @@
 npx skills add briqt/my-agent-browser -g
 ```
 
-This installs the skill, including `start-mcp.sh` and config template, to `~/.agents/skills/my-agent-browser/`.
+This installs the skill, including `start-mcp.js` and config template, to `~/.agents/skills/my-agent-browser/`.
 
 ### Step 2: Install the runtime dependency
 
@@ -38,7 +37,8 @@ Add the browser MCP server to your agent's config:
 {
   "mcpServers": {
     "browser": {
-      "command": "~/.agents/skills/my-agent-browser/scripts/start-mcp.sh"
+      "command": "node",
+      "args": ["~/.agents/skills/my-agent-browser/scripts/start-mcp.js"]
     }
   }
 }
@@ -49,18 +49,20 @@ Add the browser MCP server to your agent's config:
 {
   "mcpServers": {
     "browser": {
-      "command": "~/.agents/skills/my-agent-browser/scripts/start-mcp.sh"
+      "command": "node",
+      "args": ["~/.agents/skills/my-agent-browser/scripts/start-mcp.js"]
     }
   }
 }
 ```
 
-**Kiro CLI** (`~/.kiro/settings.json`):
+**Windows** — use the full path to node and the script:
 ```json
 {
   "mcpServers": {
     "browser": {
-      "command": "~/.agents/skills/my-agent-browser/scripts/start-mcp.sh"
+      "command": "node",
+      "args": ["C:\\Users\\YOU\\.agents\\skills\\my-agent-browser\\scripts\\start-mcp.js"]
     }
   }
 }
@@ -74,7 +76,7 @@ Restart your agent session, then ask it to navigate to a page:
 navigate to https://example.com and take a snapshot
 ```
 
-If the MCP tools respond, you're set. If you get "tool not found", check that the path in step 4 is correct and the script is executable (`chmod +x ~/.agents/skills/my-agent-browser/scripts/start-mcp.sh`).
+If the MCP tools respond, you're set. If you get "tool not found", check that the path in step 4 is correct and that `node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js` runs without error when executed manually.
 
 ## Quick Install (optional)
 
