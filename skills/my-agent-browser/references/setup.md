@@ -3,31 +3,42 @@
 ## Prerequisites
 
 - Google Chrome, Chromium, or Microsoft Edge installed
-- Node.js 18+ (for npx / npm)
+- Node.js 18+ (for npm)
 - python3 (for config parsing in wrapper script)
 
 ## Installation
 
+### Step 1: Install the skill
+
 ```bash
-git clone https://github.com/briqt/my-agent-browser.git ~/.my-agent-browser
-cd ~/.my-agent-browser && bash install.sh
+npx skills add briqt/my-agent-browser -g
 ```
 
-The installer will:
-1. Install `chrome-devtools-mcp` globally (eliminates npx startup delay)
-2. Create `~/.my-agent-browser/config.json` from the example template
-3. Print the MCP server config snippet to add to your agent
+This installs the skill, including `start-mcp.sh` and config template, to `~/.agents/skills/my-agent-browser/`.
 
-## MCP Server Configuration
+### Step 2: Install the runtime dependency
 
-After running `install.sh`, add the printed config to your agent:
+```bash
+npm install -g chrome-devtools-mcp@latest
+```
+
+### Step 3: Create your personal config
+
+```bash
+mkdir -p ~/.my-agent-browser
+cp ~/.agents/skills/my-agent-browser/config.example.json ~/.my-agent-browser/config.json
+```
+
+### Step 4: Configure your agent's MCP server
+
+Add the browser MCP server to your agent's config:
 
 **Claude Code** (`~/.claude/settings.json`):
 ```json
 {
   "mcpServers": {
     "browser": {
-      "command": "/home/YOU/.my-agent-browser/scripts/start-mcp.sh"
+      "command": "~/.agents/skills/my-agent-browser/scripts/start-mcp.sh"
     }
   }
 }
@@ -38,19 +49,43 @@ After running `install.sh`, add the printed config to your agent:
 {
   "mcpServers": {
     "browser": {
-      "command": "/home/YOU/.my-agent-browser/scripts/start-mcp.sh"
+      "command": "~/.agents/skills/my-agent-browser/scripts/start-mcp.sh"
     }
   }
 }
 ```
 
-Replace `/home/YOU` with your actual home directory path.
+**Kiro CLI** (`~/.kiro/settings.json`):
+```json
+{
+  "mcpServers": {
+    "browser": {
+      "command": "~/.agents/skills/my-agent-browser/scripts/start-mcp.sh"
+    }
+  }
+}
+```
 
-## Installing the Skill
+### Step 5: Verify
+
+Restart your agent session, then ask it to navigate to a page:
+
+```
+navigate to https://example.com and take a snapshot
+```
+
+If the MCP tools respond, you're set. If you get "tool not found", check that the path in step 4 is correct and the script is executable (`chmod +x ~/.agents/skills/my-agent-browser/scripts/start-mcp.sh`).
+
+## Quick Install (optional)
+
+If you prefer a one-step setup, clone the repo and run the install script:
 
 ```bash
-npx skills add ~/.my-agent-browser/skills/my-agent-browser -g
+git clone https://github.com/briqt/my-agent-browser.git ~/.my-agent-browser-repo
+cd ~/.my-agent-browser-repo && bash install.sh
 ```
+
+This does steps 2-4 automatically. You still need step 1 (`npx skills add`) for the skill itself.
 
 ## Configuration
 
@@ -111,19 +146,17 @@ Edit `~/.my-agent-browser/config.json`:
 
 Note: Chrome locks user-data-dir, so you can't use the same profile simultaneously from two processes.
 
-## Manual Chrome Control
-
-The MCP server manages Chrome automatically. For manual control:
-
-```bash
-~/.my-agent-browser/scripts/browser.sh start
-~/.my-agent-browser/scripts/browser.sh status
-~/.my-agent-browser/scripts/browser.sh stop
-```
-
 ## Updating
 
 ```bash
-cd ~/.my-agent-browser && git pull
+npx skills update my-agent-browser -g
 npm install -g chrome-devtools-mcp@latest
+```
+
+## Uninstalling
+
+```bash
+npx skills remove my-agent-browser -g
+npm uninstall -g chrome-devtools-mcp
+rm -rf ~/.my-agent-browser
 ```

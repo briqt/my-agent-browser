@@ -1,0 +1,13 @@
+{
+  "browser": {
+    "userDataDir": "~/.my-agent-browser/user-data",
+    "headless": true,
+    "proxy": "",
+    "viewport": "1280x720",
+    "extraArgs": []
+  },
+  "mcp": {
+    "features": [],
+    "flags": []
+  }
+}

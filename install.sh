@@ -1,33 +1,42 @@
 #!/usr/bin/env bash
+# Optional convenience script — does steps 2-4 of the setup in one go.
+# Step 1 (npx skills add briqt/my-agent-browser -g) must be done separately.
 set -euo pipefail
 
-INSTALL_DIR="${MY_AGENT_BROWSER_HOME:-$HOME/.my-agent-browser}"
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_DIR="${MY_AGENT_BROWSER_HOME:-$HOME/.my-agent-browser}"
+SKILL_DIR="$HOME/.agents/skills/my-agent-browser"
 
-echo "Installing my-agent-browser..."
+echo "my-agent-browser — quick setup"
+echo ""
 
-# 1. Install chrome-devtools-mcp globally (eliminates npx startup delay)
+# 1. Install chrome-devtools-mcp globally
 echo "  → Installing chrome-devtools-mcp..."
 npm install -g chrome-devtools-mcp@latest 2>/dev/null || {
-  echo "  ⚠ Global npm install failed. Will fall back to npx (slower)."
+  echo "  ⚠ Global npm install failed. Will fall back to npx (slower startup)."
 }
 
-# 2. Create config directory
-mkdir -p "$INSTALL_DIR"
+# 2. Create config
+mkdir -p "$CONFIG_DIR"
 
-# 3. Copy example config if no config exists
-if [[ ! -f "$INSTALL_DIR/config.json" ]]; then
-  cp "$REPO_DIR/config.example.json" "$INSTALL_DIR/config.json"
-  echo "  → Created $INSTALL_DIR/config.json"
+if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
+  # Prefer the skill-bundled template; fall back to repo-local copy
+  if [[ -f "$SKILL_DIR/config.example.json" ]]; then
+    cp "$SKILL_DIR/config.example.json" "$CONFIG_DIR/config.json"
+  elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/config.example.json" ]]; then
+    cp "$(dirname "${BASH_SOURCE[0]}")/config.example.json" "$CONFIG_DIR/config.json"
+  fi
+  echo "  → Created $CONFIG_DIR/config.json"
 else
-  echo "  → Config already exists: $INSTALL_DIR/config.json"
+  echo "  → Config already exists: $CONFIG_DIR/config.json"
 fi
 
-# 4. Make scripts executable
-chmod +x "$REPO_DIR/scripts/"*.sh
+# 3. Ensure start-mcp.sh is executable
+if [[ -f "$SKILL_DIR/scripts/start-mcp.sh" ]]; then
+  chmod +x "$SKILL_DIR/scripts/start-mcp.sh"
+fi
 
-# 5. Print MCP server config for the user to add
-SCRIPT_PATH="$REPO_DIR/scripts/start-mcp.sh"
+# 4. Print MCP server config
+SCRIPT_PATH="$SKILL_DIR/scripts/start-mcp.sh"
 
 echo ""
 echo "Done! Add this to your agent's MCP server config:"
@@ -46,5 +55,5 @@ echo "        \"command\": \"$SCRIPT_PATH\""
 echo "      }"
 echo "    }"
 echo ""
-echo "Config: $INSTALL_DIR/config.json"
+echo "Config: $CONFIG_DIR/config.json"
 echo "Edit it to set proxy, extraArgs (anti-detection), headless mode, etc."
