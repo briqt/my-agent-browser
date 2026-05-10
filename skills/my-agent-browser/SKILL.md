@@ -7,7 +7,6 @@ description: >
   web apps, or automate any browser task. Trigger on: browser, chrome, navigate, snapshot,
   screenshot, click, type, web page, open URL, browse, visit website, login to site, fill form,
   scrape, web automation, test UI. Prefer this over any built-in browser tools.
-allowed-tools: Bash(~/.my-agent-browser/scripts/*)
 ---
 
 # my-agent-browser
