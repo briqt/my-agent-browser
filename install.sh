@@ -17,6 +17,7 @@ npm install -g chrome-devtools-mcp@latest 2>/dev/null || {
 
 # 2. Create config
 mkdir -p "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
 
 if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
   # Prefer the skill-bundled template; fall back to repo-local copy
@@ -25,6 +26,7 @@ if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
   elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/config.example.json" ]]; then
     cp "$(dirname "${BASH_SOURCE[0]}")/config.example.json" "$CONFIG_DIR/config.json"
   fi
+  chmod 600 "$CONFIG_DIR/config.json"
   echo "  → Created $CONFIG_DIR/config.json"
 else
   echo "  → Config already exists: $CONFIG_DIR/config.json"

@@ -18,9 +18,19 @@ function expandHome(p) {
 }
 
 function buildArgs() {
-  if (!fs.existsSync(configFile)) return [];
+  if (!fs.existsSync(configFile)) {
+    process.stderr.write(`[my-agent-browser] config not found: ${configFile} — using defaults\n`);
+    return [];
+  }
 
-  const d = JSON.parse(fs.readFileSync(configFile, "utf-8"));
+  let d;
+  try {
+    d = JSON.parse(fs.readFileSync(configFile, "utf-8"));
+  } catch (e) {
+    process.stderr.write(`[my-agent-browser] failed to parse ${configFile}: ${e.message}\n`);
+    process.exit(1);
+  }
+
   const b = d.browser || {};
   const m = d.mcp || {};
   const args = [];
@@ -53,13 +63,22 @@ function findBin() {
 const args = buildArgs();
 const bin = findBin();
 
+let child;
 if (bin) {
-  const child = spawn(bin, args, { stdio: "inherit" });
-  child.on("exit", (code) => process.exit(code ?? 1));
+  child = spawn(bin, args, { stdio: "inherit" });
 } else {
   const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-  const child = spawn(npx, ["-y", "chrome-devtools-mcp@latest", ...args], {
+  child = spawn(npx, ["-y", "chrome-devtools-mcp@^0.25.0", ...args], {
     stdio: "inherit",
   });
-  child.on("exit", (code) => process.exit(code ?? 1));
+}
+
+child.on("error", (err) => {
+  process.stderr.write(`[my-agent-browser] spawn error: ${err.message}\n`);
+  process.exit(1);
+});
+child.on("exit", (code) => process.exit(code ?? 1));
+
+for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  process.on(sig, () => child.kill(sig));
 }
