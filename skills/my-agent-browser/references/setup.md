@@ -5,6 +5,17 @@
 - Google Chrome, Chromium, or Microsoft Edge installed
 - Node.js 20+ (for npm and the MCP wrapper script)
 
+## Path Convention
+
+Throughout this document, `<skill-dir>` refers to the directory containing SKILL.md. The actual path depends on your agent and installation scope:
+
+| Agent | Typical path |
+|-------|-------------|
+| Claude Code (global) | `~/.agents/skills/my-agent-browser/` |
+| Claude Code (project) | `.claude/skills/my-agent-browser/` |
+| Cursor | `~/.agents/skills/my-agent-browser/` |
+| Kiro | `~/.agents/skills/my-agent-browser/` |
+
 ## Installation
 
 ### Step 1: Install the skill
@@ -13,24 +24,24 @@
 npx skills add briqt/my-agent-browser -g
 ```
 
-This installs the skill, including `start-mcp.js` and config template, to `~/.agents/skills/my-agent-browser/`.
+This installs the skill (SKILL.md, scripts, references) to `<skill-dir>`.
 
 ### Step 2: Install the runtime dependency
 
 ```bash
-npm install -g chrome-devtools-mcp@latest
+npm install -g chrome-devtools-mcp@^0.25.0
 ```
 
 ### Step 3: Create your personal config
 
 ```bash
 mkdir -p ~/.my-agent-browser
-cp ~/.agents/skills/my-agent-browser/config.example.json ~/.my-agent-browser/config.json
+cp <skill-dir>/config.example.json ~/.my-agent-browser/config.json
 ```
 
 ### Step 4: Configure your agent's MCP server
 
-Add the browser MCP server to your agent's config:
+Add the browser MCP server to your agent's config. Use the actual resolved path for `<skill-dir>`.
 
 **Claude Code** (`~/.claude/settings.json`):
 ```json
@@ -56,7 +67,7 @@ Add the browser MCP server to your agent's config:
 }
 ```
 
-**Windows** — use the full path to node and the script:
+**Windows** — use the full path:
 ```json
 {
   "mcpServers": {

@@ -12,8 +12,10 @@ A thin config-driven wrapper that gives AI agents native MCP tool calls for brow
 npx skills add briqt/my-agent-browser -g
 npm install -g chrome-devtools-mcp@^0.25.0
 mkdir -p ~/.my-agent-browser
-cp ~/.agents/skills/my-agent-browser/config.example.json ~/.my-agent-browser/config.json
+cp <skill-dir>/config.example.json ~/.my-agent-browser/config.json
 ```
+
+`<skill-dir>` is where the skill was installed (typically `~/.agents/skills/my-agent-browser/`).
 
 Then add the MCP server to your agent's config (Claude Code example):
 
@@ -22,7 +24,7 @@ Then add the MCP server to your agent's config (Claude Code example):
   "mcpServers": {
     "browser": {
       "command": "node",
-      "args": ["~/.agents/skills/my-agent-browser/scripts/start-mcp.js"]
+      "args": ["<skill-dir>/scripts/start-mcp.js"]
     }
   }
 }

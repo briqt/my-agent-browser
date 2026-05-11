@@ -16,15 +16,28 @@ Browser automation for AI agents via `chrome-devtools-mcp` MCP server.
 
 ## Setup Check
 
+`<skill-dir>` refers to the directory containing this SKILL.md (typically `~/.agents/skills/my-agent-browser/` or `~/.claude/skills/my-agent-browser/` depending on your agent).
+
 If browser MCP tools (`navigate_page`, `take_snapshot`, `click`, `fill`) are not available in your tool list:
 
 1. Install: `npm install -g chrome-devtools-mcp@^0.25.0`
-2. Create config directory and file:
+2. Create config:
    ```bash
    mkdir -p ~/.my-agent-browser
-   cp <this-skill-path>/config.example.json ~/.my-agent-browser/config.json
+   cp <skill-dir>/config.example.json ~/.my-agent-browser/config.json
    ```
-3. Add the MCP server to your agent config — see [references/setup.md](references/setup.md)
+3. Register the MCP server in your agent config:
+   ```json
+   {
+     "mcpServers": {
+       "browser": {
+         "command": "node",
+         "args": ["<skill-dir>/scripts/start-mcp.js"]
+       }
+     }
+   }
+   ```
+   See [references/setup.md](references/setup.md) for platform-specific paths.
 4. Restart the agent session
 
 ## Core Workflow
