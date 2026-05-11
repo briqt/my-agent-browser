@@ -4,7 +4,8 @@
     "headless": true,
     "proxy": "",
     "viewport": "1280x720",
-    "extraArgs": []
+    "extraArgs": [],
+    "browserUrl": ""
   },
   "mcp": {
     "features": [],

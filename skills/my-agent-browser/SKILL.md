@@ -66,6 +66,30 @@ Each `uid=X_Y` is the identifier you pass to `click`, `fill`, `hover`, etc.
 - `wait_for { text[] }` — Wait for text to appear
 - `resize_page { width, height }` — Change viewport
 
+### Advanced Tools (requires category flags in config)
+
+These tools are available when the corresponding `mcp.flags` are enabled in `~/.my-agent-browser/config.json`. See [references/setup.md](references/setup.md) for configuration.
+
+**Performance** (`--categoryPerformance`):
+- `performance_start_trace` — Start a performance trace recording
+- `performance_stop_trace` — Stop trace and get results
+- `performance_analyze_insight { id, type }` — Deep-dive into a specific performance insight
+- `take_memory_snapshot { filePath }` — Capture a heap snapshot
+
+**Network** (`--categoryNetwork`):
+- `list_network_requests` — List all network requests (filterable by resource type)
+- `get_network_request { reqid }` — Get request/response details including body
+
+**Lighthouse** (`--categoryLighthouse`):
+- `lighthouse_audit { mode, device }` — Run Lighthouse audit (navigation or snapshot, desktop or mobile)
+
+**Console** (`--categoryConsole`):
+- `list_console_messages` — List browser console messages (filterable by type)
+- `get_console_message { id }` — Get a specific console message with stack trace
+
+**Emulation** (`--categoryEmulation`):
+- `emulate { networkConditions, cpuThrottlingRate, geolocation, colorScheme, viewport, userAgent }` — Emulate device conditions
+
 ## Why UIDs Are Ephemeral
 
 UIDs come from the current DOM state. When the page changes (navigation, click,

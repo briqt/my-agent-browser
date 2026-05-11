@@ -118,6 +118,7 @@ Edit `~/.my-agent-browser/config.json`:
 | `browser.proxy` | HTTP proxy for all browser traffic | `""` (none) |
 | `browser.viewport` | Browser window size | `"1280x720"` |
 | `browser.extraArgs` | Additional Chrome flags (anti-detection, etc.) | `[]` |
+| `browser.browserUrl` | Connect to an existing Chrome instance (e.g., `http://127.0.0.1:9222`) | `""` (launch new) |
 | `mcp.features` | Extra chrome-devtools-mcp feature flags | `[]` |
 | `mcp.flags` | Extra chrome-devtools-mcp category flags | `[]` |
 
@@ -147,6 +148,57 @@ Edit `~/.my-agent-browser/config.json`:
 ```
 
 Note: Chrome locks user-data-dir, so you can't use the same profile simultaneously from two processes.
+
+### Full mode (performance, network, lighthouse)
+
+By default, only core browser automation tools are available. To unlock advanced capabilities, add category flags to `mcp.flags`:
+
+```json
+{
+  "mcp": {
+    "flags": [
+      "--categoryPerformance",
+      "--categoryNetwork",
+      "--categoryLighthouse",
+      "--categoryConsole",
+      "--categoryEmulation"
+    ]
+  }
+}
+```
+
+Available categories:
+
+| Flag | Tools unlocked |
+|------|---------------|
+| `--categoryPerformance` | `performance_start_trace`, `performance_stop_trace`, `performance_analyze_insight`, `take_memory_snapshot` |
+| `--categoryNetwork` | `list_network_requests`, `get_network_request` |
+| `--categoryLighthouse` | `lighthouse_audit` (navigation and snapshot modes) |
+| `--categoryConsole` | `list_console_messages`, `get_console_message` |
+| `--categoryEmulation` | `emulate` (network conditions, CPU throttling, geolocation, color scheme, user agent) |
+| `--categoryExtensions` | `list_extensions`, `install_extension`, `uninstall_extension`, `reload_extension` |
+
+You can enable all categories at once or pick only what you need. More categories = more tools exposed to the agent = slightly longer tool list in context.
+
+### Connecting to an existing Chrome instance
+
+If you need to connect to a Chrome that's already running (e.g., in Docker, a remote machine, or to preserve login state across sessions):
+
+1. Start Chrome with remote debugging enabled:
+   ```bash
+   google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-profile
+   ```
+
+2. Set `browserUrl` in config:
+   ```json
+   {
+     "browser": {
+       "browserUrl": "http://127.0.0.1:9222"
+     }
+   }
+   ```
+
+When `browserUrl` is set, chrome-devtools-mcp connects to the existing instance instead of launching a new one. The `headless`, `userDataDir`, and `extraArgs` fields are ignored in this mode (they only apply when launching Chrome).
 
 ## Updating
 

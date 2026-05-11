@@ -25,6 +25,7 @@ function buildArgs() {
   const m = d.mcp || {};
   const args = [];
 
+  if (b.browserUrl) args.push(`--browser-url=${b.browserUrl}`);
   if (b.userDataDir) args.push(`--userDataDir=${expandHome(b.userDataDir)}`);
   if (b.headless) args.push("--headless");
   if (b.proxy) args.push(`--proxyServer=${b.proxy}`);
