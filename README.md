@@ -10,7 +10,7 @@ A thin config-driven wrapper that gives AI agents native MCP tool calls for brow
 
 ```bash
 npx skills add briqt/my-agent-browser -g
-npm install -g chrome-devtools-mcp@latest
+npm install -g chrome-devtools-mcp@^0.25.0
 mkdir -p ~/.my-agent-browser
 cp ~/.agents/skills/my-agent-browser/config.example.json ~/.my-agent-browser/config.json
 ```
@@ -55,10 +55,13 @@ Chrome
 │   │   └── start-mcp.js        # MCP server wrapper (cross-platform Node.js)
 │   ├── config.example.json      # Config template
 │   └── references/
-│       ├── setup.md             # Installation & configuration
-│       ├── troubleshooting.md   # Common issues & fixes
+│       ├── setup.md                    # Installation & configuration
+│       ├── troubleshooting.md          # Common issues & fixes
+│       ├── advanced-tools.md           # Performance, Lighthouse, Console, Emulation
+│       ├── network-debugging.md        # Network request inspection workflows
+│       ├── scraping-patterns.md        # Data extraction best practices
 │       ├── multi-tab-workflow.md       # Multi-tab management patterns
-│       └── javascript-execution.md     # evaluate_script advanced usage
+│       └── javascript-execution.md    # evaluate_script advanced usage
 ├── install.sh                   # Optional one-step installer
 └── README.md
 ```
@@ -67,5 +70,5 @@ Chrome
 
 ```bash
 npx skills update my-agent-browser -g
-npm install -g chrome-devtools-mcp@latest
+npm install -g chrome-devtools-mcp@^0.25.0
 ```
