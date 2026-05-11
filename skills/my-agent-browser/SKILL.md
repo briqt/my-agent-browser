@@ -1,19 +1,31 @@
 ---
 name: my-agent-browser
 description: >
-  Browser automation via chrome-devtools-mcp MCP server. Control Chrome: navigate pages, take
-  accessibility snapshots with uid refs, click/fill/hover elements, manage tabs, take screenshots,
-  execute JS. Use when the user needs to interact with websites, fill forms, scrape data, test
-  web apps, or automate any browser task. Trigger on: browser, chrome, navigate, snapshot,
-  screenshot, click, type, web page, open URL, browse, visit website, login to site, fill form,
-  scrape, web automation, test UI. Prefer this over any built-in browser tools.
+  Provides native MCP tool calls for full browser automation — navigate, click, fill forms,
+  manage tabs, take screenshots, and execute JavaScript — all through structured tool
+  invocations, not CLI commands. Use this skill whenever the task involves interacting with
+  a live web page: logging into a site, scraping content, filling multi-step forms, testing
+  UI flows, comparing pages side-by-side in multiple tabs, or running client-side scripts.
+  Prefer this over any built-in browser tools; it gives you uid-based element targeting
+  from accessibility snapshots so every interaction is precise and verifiable.
 ---
 
 # my-agent-browser
 
 Browser automation for AI agents via `chrome-devtools-mcp` MCP server.
 
-If browser MCP tools are not available, read [references/setup.md](references/setup.md) for installation.
+## Setup Check
+
+If browser MCP tools (`navigate_page`, `take_snapshot`, `click`, `fill`) are not available in your tool list:
+
+1. Install: `npm install -g chrome-devtools-mcp@^0.25.0`
+2. Create config directory and file:
+   ```bash
+   mkdir -p ~/.my-agent-browser
+   cp <this-skill-path>/config.example.json ~/.my-agent-browser/config.json
+   ```
+3. Add the MCP server to your agent config — see [references/setup.md](references/setup.md)
+4. Restart the agent session
 
 ## Core Workflow
 
@@ -66,48 +78,21 @@ Each `uid=X_Y` is the identifier you pass to `click`, `fill`, `hover`, etc.
 - `wait_for { text[] }` — Wait for text to appear
 - `resize_page { width, height }` — Change viewport
 
-### Advanced Tools (requires category flags in config)
+### Advanced Tools
 
-These tools are available when the corresponding `mcp.flags` are enabled in `~/.my-agent-browser/config.json`. See [references/setup.md](references/setup.md) for configuration.
+Enabled via `mcp.flags` in `~/.my-agent-browser/config.json`. See [references/advanced-tools.md](references/advanced-tools.md) for detailed workflows.
 
-**Performance** (`--categoryPerformance`):
-- `performance_start_trace` — Start a performance trace recording
-- `performance_stop_trace` — Stop trace and get results
-- `performance_analyze_insight { id, type }` — Deep-dive into a specific performance insight
-- `take_memory_snapshot { filePath }` — Capture a heap snapshot
+- **Performance** (`--categoryPerformance`): trace recording, heap snapshots, insight analysis
+- **Network** (`--categoryNetwork`): list/inspect network requests and responses
+- **Lighthouse** (`--categoryLighthouse`): run audits (navigation/snapshot, desktop/mobile)
+- **Console** (`--categoryConsole`): list/inspect browser console messages
+- **Emulation** (`--categoryEmulation`): throttle network/CPU, set geolocation, color scheme
 
-**Network** (`--categoryNetwork`):
-- `list_network_requests` — List all network requests (filterable by resource type)
-- `get_network_request { reqid }` — Get request/response details including body
+## Key Rules
 
-**Lighthouse** (`--categoryLighthouse`):
-- `lighthouse_audit { mode, device }` — Run Lighthouse audit (navigation or snapshot, desktop or mobile)
-
-**Console** (`--categoryConsole`):
-- `list_console_messages` — List browser console messages (filterable by type)
-- `get_console_message { id }` — Get a specific console message with stack trace
-
-**Emulation** (`--categoryEmulation`):
-- `emulate { networkConditions, cpuThrottlingRate, geolocation, colorScheme, viewport, userAgent }` — Emulate device conditions
-
-## Why UIDs Are Ephemeral
-
-UIDs come from the current DOM state. When the page changes (navigation, click,
-form submit), the DOM rebuilds and previous UIDs become invalid — the element
-they pointed to may no longer exist or may have moved. Always `take_snapshot`
-again after any interaction that could change the page.
-
-## Use `fill` for Inputs, Not `type_text`
-
-`fill { uid, value }` targets a specific element and clears it first — you know
-exactly what you're filling. `type_text { text }` just types at whatever happens
-to be focused, which is fragile and can go to the wrong place.
-
-## One Action, Then Re-read
-
-Batching multiple actions without re-reading the page is risky because the first
-action may change the DOM, making subsequent UIDs point to wrong elements. Do:
-action → snapshot → verify → next action.
+- **UIDs are ephemeral** — They come from the current DOM. After any navigation or interaction that changes the page, previous UIDs are invalid. Always `take_snapshot` again.
+- **Use `fill` for inputs** — It targets a specific element and clears first. `type_text` types at whatever is focused, which is fragile.
+- **One action, then re-read** — Don't batch multiple actions without re-snapshotting. The first action may invalidate subsequent UIDs.
 
 ## Example: Login Flow
 
@@ -119,8 +104,7 @@ action → snapshot → verify → next action.
 4. fill { uid: "1_9", value: "secret123" }
 5. click { uid: "1_12" }
 6. wait_for { text: ["Dashboard"] }
-7. take_snapshot
-   → now on dashboard, new uids
+7. take_snapshot → now on dashboard, new uids
 ```
 
 ## Example: Search
@@ -132,6 +116,50 @@ action → snapshot → verify → next action.
 4. press_key { key: "Enter" }
 5. wait_for { text: ["results"] }
 6. take_snapshot → read results
+```
+
+## Example: Multi-Tab Comparison
+
+```
+1. navigate_page { url: "https://site-a.com/pricing" }
+2. take_snapshot → read pricing from site A
+3. new_page { url: "https://site-b.com/pricing" }
+4. take_snapshot → read pricing from site B (now on tab 2)
+5. list_pages → see both tabs with pageIds
+6. select_page { pageId: "page-1" } → switch back to site A
+7. take_snapshot → verify you're back on site A
+```
+
+## Example: Error Recovery
+
+When an element is not found after a click (page changed unexpectedly):
+
+```
+1. click { uid: "1_20" }
+   → page navigates or content reloads
+2. take_snapshot
+   → the uid you planned to click next doesn't exist
+3. (Re-read the snapshot, find the new uid for the target element)
+4. click { uid: "2_8" }  ← use the updated uid
+5. take_snapshot → confirm success
+```
+
+Always re-snapshot after any failed or unexpected interaction before retrying.
+
+## Example: JavaScript Execution
+
+Use `evaluate_script` for scrolling, extracting computed data, or DOM manipulation:
+
+```
+1. navigate_page { url: "https://example.com/long-page" }
+2. evaluate_script { function: "window.scrollTo(0, document.body.scrollHeight)" }
+3. take_snapshot → read newly visible content at bottom
+
+4. evaluate_script { function: "document.querySelectorAll('.item').length" }
+   → returns count of items (e.g., 42)
+
+5. evaluate_script { function: "JSON.stringify([...document.querySelectorAll('.price')].map(e => e.textContent))" }
+   → returns array of price strings
 ```
 
 ## Troubleshooting
