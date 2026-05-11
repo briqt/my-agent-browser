@@ -56,11 +56,10 @@ Chrome
 │   ├── config.example.json      # Config template
 │   └── references/
 │       ├── setup.md             # Installation & configuration
-│       └── troubleshooting.md   # Common issues & fixes
-├── scripts/
-│   └── browser.sh              # Manual Chrome lifecycle (start/stop/status, for debugging)
+│       ├── troubleshooting.md   # Common issues & fixes
+│       ├── multi-tab-workflow.md       # Multi-tab management patterns
+│       └── javascript-execution.md     # evaluate_script advanced usage
 ├── install.sh                   # Optional one-step installer
-├── config.example.json          # Config template (also in skill/)
 └── README.md
 ```
 

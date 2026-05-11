@@ -149,6 +149,23 @@ Edit `~/.my-agent-browser/config.json`:
 
 Note: Chrome locks user-data-dir, so you can't use the same profile simultaneously from two processes.
 
+### Understanding `mcp.features` vs `mcp.flags`
+
+The `mcp` section of config.json has two arrays that serve different purposes:
+
+- **`flags`** — Category toggles that enable entire groups of tools. Each flag
+  unlocks a set of related MCP tools that the agent can call. Without the flag,
+  those tools are hidden from the agent entirely. Example: `--categoryNetwork`
+  enables `list_network_requests` and `get_network_request`.
+
+- **`features`** — Individual feature flags that change chrome-devtools-mcp's
+  behavior or output format. These don't add new tools; they modify how existing
+  tools work. Example: `--vision` makes `take_snapshot` return a screenshot
+  image instead of an accessibility-tree text representation.
+
+In short: `flags` control *which tools are available*, `features` control *how
+tools behave*.
+
 ### Full mode (performance, network, lighthouse)
 
 By default, only core browser automation tools are available. To unlock advanced capabilities, add category flags to `mcp.flags`:
