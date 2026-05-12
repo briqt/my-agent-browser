@@ -23,8 +23,8 @@ If browser MCP tools (`navigate_page`, `take_snapshot`, `click`, `fill`) are not
 1. Install: `npm install -g chrome-devtools-mcp@^0.25.0`
 2. Create config:
    ```bash
-   mkdir -p ~/.my-agent-browser
-   cp <skill-dir>/config.example.json ~/.my-agent-browser/config.json
+   mkdir -p ~/.config/agent-skills/my-agent-browser
+   cp <skill-dir>/config.example.json ~/.config/agent-skills/my-agent-browser/config.json
    ```
 3. Register the MCP server in your agent config:
    ```json
@@ -93,7 +93,7 @@ Each `uid=X_Y` is the identifier you pass to `click`, `fill`, `hover`, etc.
 
 ### Advanced Tools
 
-Enabled via `mcp.flags` in `~/.my-agent-browser/config.json`. See [references/advanced-tools.md](references/advanced-tools.md) for detailed workflows.
+Enabled via `mcp.flags` in `~/.config/agent-skills/my-agent-browser/config.json`. See [references/advanced-tools.md](references/advanced-tools.md) for detailed workflows.
 
 - **Performance** (`--categoryPerformance`): trace recording, heap snapshots, insight analysis
 - **Network** (`--categoryNetwork`): list/inspect network requests and responses

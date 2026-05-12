@@ -106,7 +106,7 @@ Tips for `evaluate_script`:
 
 ## Anti-Detection
 
-Sites may block automated browsers. Configure anti-detection in `~/.my-agent-browser/config.json`:
+Sites may block automated browsers. Configure anti-detection in `~/.config/agent-skills/my-agent-browser/config.json`:
 
 ```json
 {

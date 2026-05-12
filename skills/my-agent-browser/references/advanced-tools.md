@@ -1,7 +1,7 @@
 # Advanced Tools
 
 This guide covers the advanced tool categories that require explicit flags in
-`~/.my-agent-browser/config.json`. Enable them by adding the corresponding
+`~/.config/agent-skills/my-agent-browser/config.json`. Enable them by adding the corresponding
 `--category*` flag to `mcp.flags`. See [setup.md](setup.md) for configuration details.
 
 ## Performance Tools

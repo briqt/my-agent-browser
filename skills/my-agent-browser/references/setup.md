@@ -35,8 +35,8 @@ npm install -g chrome-devtools-mcp@^0.25.0
 ### Step 3: Create your personal config
 
 ```bash
-mkdir -p ~/.my-agent-browser
-cp <skill-dir>/config.example.json ~/.my-agent-browser/config.json
+mkdir -p ~/.config/agent-skills/my-agent-browser
+cp <skill-dir>/config.example.json ~/.config/agent-skills/my-agent-browser/config.json
 ```
 
 ### Step 4: Configure your agent's MCP server
@@ -89,28 +89,18 @@ navigate to https://example.com and take a snapshot
 
 If the MCP tools respond, you're set. If you get "tool not found", check that the path in step 4 is correct and that `node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js` runs without error when executed manually.
 
-## Quick Install (optional)
-
-If you prefer a one-step setup, clone the repo and run the install script:
-
-```bash
-git clone https://github.com/briqt/my-agent-browser.git ~/.my-agent-browser-repo
-cd ~/.my-agent-browser-repo && bash install.sh
-```
-
-This does steps 2-4 automatically. You still need step 1 (`npx skills add`) for the skill itself.
-
 ## Configuration
 
-Edit `~/.my-agent-browser/config.json`:
+Edit `~/.config/agent-skills/my-agent-browser/config.json`:
 
 ```json
 {
   "browser": {
-    "userDataDir": "~/.my-agent-browser/user-data",
+    "userDataDir": "~/.config/agent-skills/my-agent-browser/user-data",
     "headless": true,
     "proxy": "",
     "viewport": "1280x720",
+    "debuggingPort": 19222,
     "extraArgs": []
   },
   "mcp": {
@@ -124,10 +114,11 @@ Edit `~/.my-agent-browser/config.json`:
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `browser.userDataDir` | Chrome profile directory (cookies/logins persist here) | `~/.my-agent-browser/user-data` |
+| `browser.userDataDir` | Chrome profile directory (cookies/logins persist here) | `~/.config/agent-skills/my-agent-browser/user-data` |
 | `browser.headless` | Run without visible window | `true` |
 | `browser.proxy` | HTTP proxy for all browser traffic | `""` (none) |
 | `browser.viewport` | Browser window size | `"1280x720"` |
+| `browser.debuggingPort` | Chrome remote debugging port (for multi-session sharing) | `19222` |
 | `browser.extraArgs` | Additional Chrome flags (anti-detection, etc.) | `[]` |
 | `browser.browserUrl` | Connect to an existing Chrome instance (e.g., `http://127.0.0.1:9222`) | `""` (launch new) |
 | `mcp.features` | Extra chrome-devtools-mcp feature flags | `[]` |
@@ -240,5 +231,5 @@ npm install -g chrome-devtools-mcp@latest
 ```bash
 npx skills remove my-agent-browser -g
 npm uninstall -g chrome-devtools-mcp
-rm -rf ~/.my-agent-browser
+rm -rf ~/.config/agent-skills/my-agent-browser
 ```

@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "my-agent-browser config",
+  "type": "object",
+  "properties": {
+    "browser": {
+      "type": "object",
+      "description": "Chrome 浏览器启动配置",
+      "properties": {
+        "userDataDir": {
+          "type": "string",
+          "description": "Chrome user-data 目录路径，支持 ~ 展开"
+        },
+        "headless": {
+          "type": "boolean",
+          "description": "是否以无头模式运行"
+        },
+        "proxy": {
+          "type": "string",
+          "description": "代理服务器地址（如 http://127.0.0.1:3067）"
+        },
+        "viewport": {
+          "type": "string",
+          "description": "视口尺寸（如 1280x720）"
+        },
+        "debuggingPort": {
+          "type": "integer",
+          "description": "Chrome remote debugging 端口",
+          "default": 19222
+        },
+        "extraArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "传递给 Chrome 的额外启动参数"
+        },
+        "browserUrl": {
+          "type": "string",
+          "description": "直接连接已有 Chrome 实例的 URL（设置后跳过自动启动 Chrome）"
+        }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "description": "chrome-devtools-mcp 服务配置",
+      "properties": {
+        "features": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "启用的 MCP 功能标志"
+        },
+        "flags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "传递给 chrome-devtools-mcp 的额外 CLI 参数"
+        }
+      }
+    }
+  }
+}
