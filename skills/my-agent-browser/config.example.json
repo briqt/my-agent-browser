@@ -6,7 +6,8 @@
     "viewport": "1280x720",
     "debuggingPort": 39813,
     "extraArgs": [],
-    "browserUrl": ""
+    "browserUrl": "",
+    "lazyStart": true
   },
   "mcp": {
     "features": [],

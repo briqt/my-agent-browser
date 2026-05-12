@@ -36,6 +36,11 @@
         "browserUrl": {
           "type": "string",
           "description": "直接连接已有 Chrome 实例的 URL（设置后跳过自动启动 Chrome）"
+        },
+        "lazyStart": {
+          "type": "boolean",
+          "description": "延迟启动 Chrome 到首次工具调用时（默认 true）",
+          "default": true
         }
       }
     },

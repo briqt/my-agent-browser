@@ -78,10 +78,20 @@ function isProcessAlive(pid) {
 
 function probePort(port, timeoutMs = 2000) {
   return new Promise((resolve) => {
-    const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
+    const opts = {
+      hostname: "127.0.0.1",
+      port,
+      path: "/json/version",
+      timeout: timeoutMs,
+    };
+    const req = http.get(opts, (res) => {
+      if (res.statusCode !== 200) { res.resume(); resolve(false); return; }
       let body = "";
       res.on("data", (c) => (body += c));
-      res.on("end", () => resolve(true));
+      res.on("end", () => {
+        try { const j = JSON.parse(body); resolve(!!j.Browser); }
+        catch { resolve(false); }
+      });
     });
     req.on("error", () => resolve(false));
     req.setTimeout(timeoutMs, () => { req.destroy(); resolve(false); });
@@ -185,16 +195,15 @@ function buildMcpArgs(config, port) {
   return args;
 }
 
-function startMcp(args) {
+function startMcp(args, { pipe = false } = {}) {
+  const stdio = pipe ? ["pipe", "pipe", "inherit"] : "inherit";
   const bin = findMcpBin();
   let child;
   if (bin) {
-    child = spawn(bin, args, { stdio: "inherit" });
+    child = spawn(bin, args, { stdio });
   } else {
     const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-    child = spawn(npx, ["-y", "chrome-devtools-mcp@^0.25.0", ...args], {
-      stdio: "inherit",
-    });
+    child = spawn(npx, ["-y", "chrome-devtools-mcp@^0.25.0", ...args], { stdio });
   }
   return child;
 }
@@ -219,12 +228,133 @@ function cleanup() {
   }
 }
 
+// --- Ensure Chrome is running (shared by eager and lazy paths) ---
+
+async function ensureChrome(config, port) {
+  let lock = readLock();
+
+  if (lock && isProcessAlive(lock.pid) && await probePort(lock.port || port)) {
+    lock.clients = (lock.clients || 0) + 1;
+    writeLock(lock);
+    process.stderr.write(`[my-agent-browser] reusing Chrome (PID ${lock.pid}, port ${lock.port || port}), clients: ${lock.clients}\n`);
+    return;
+  }
+
+  // Another process may have started Chrome between our check and now — probe first
+  if (await probePort(port)) {
+    process.stderr.write(`[my-agent-browser] Chrome already listening on port ${port}, reusing\n`);
+    writeLock({ port, pid: lock ? lock.pid : 0, clients: (lock ? lock.clients || 0 : 0) + 1 });
+    return;
+  }
+
+  if (lock) {
+    process.stderr.write(`[my-agent-browser] stale lock detected, cleaning up\n`);
+    if (lock.pid && isProcessAlive(lock.pid)) {
+      try { process.kill(lock.pid, "SIGTERM"); } catch {}
+    }
+    deleteLock();
+  }
+
+  const pid = launchChrome(config, port);
+  process.stderr.write(`[my-agent-browser] launched Chrome (PID ${pid}, port ${port})\n`);
+
+  const ready = await waitForPort(port);
+  if (!ready || !isProcessAlive(pid)) {
+    process.stderr.write(
+      `[my-agent-browser] Chrome failed to start (port ${port} not reachable).\n` +
+      `If port ${port} is already in use by another process, change "debuggingPort" in ${configFile}\n`
+    );
+    if (isProcessAlive(pid)) {
+      try { process.kill(pid, "SIGTERM"); } catch {}
+    }
+    process.exit(1);
+  }
+
+  writeLock({ port, pid, clients: 1 });
+}
+
+// --- Lazy start: stdin proxy with on-demand Chrome launch ---
+
+function startLazy(config, port) {
+  const mcpArgs = buildMcpArgs(config, port);
+  const child = startMcp(mcpArgs, { pipe: true });
+
+  // State: "pending" → "launching" → "ready"
+  let state = "pending";
+  let buffer = [];
+
+  function flushBuffer() {
+    for (const chunk of buffer) child.stdin.write(chunk);
+    buffer = null;
+  }
+
+  function switchToPassthrough() {
+    state = "ready";
+    flushBuffer();
+    process.stdin.pipe(child.stdin);
+  }
+
+  async function onToolsCall(line) {
+    state = "launching";
+    buffer.push(line + "\n");
+    process.stderr.write(`[my-agent-browser] first tools/call detected, launching Chrome...\n`);
+    try {
+      await ensureChrome(config, port);
+    } catch (err) {
+      process.stderr.write(`[my-agent-browser] Chrome launch failed: ${err.message}\n`);
+    }
+    switchToPassthrough();
+  }
+
+  // Parse stdin line by line while in pending/launching state
+  let partial = "";
+  process.stdin.on("data", (chunk) => {
+    if (state === "ready") return; // piped, shouldn't fire but guard anyway
+
+    if (state === "launching") {
+      buffer.push(chunk);
+      return;
+    }
+
+    // state === "pending": inspect each line
+    partial += chunk.toString();
+    const lines = partial.split("\n");
+    partial = lines.pop(); // incomplete trailing line
+
+    for (const line of lines) {
+      if (!line.trim()) { child.stdin.write("\n"); continue; }
+      let msg;
+      try { msg = JSON.parse(line); } catch { child.stdin.write(line + "\n"); continue; }
+
+      if (msg.method === "tools/call") {
+        // Buffer remaining lines too
+        if (partial) { buffer.push(partial); partial = ""; }
+        for (let i = lines.indexOf(line) + 1; i < lines.length; i++) {
+          buffer.push(lines[i] + "\n");
+        }
+        onToolsCall(line);
+        return;
+      }
+      child.stdin.write(line + "\n");
+    }
+  });
+
+  process.stdin.on("end", () => {
+    if (child.stdin.writable) child.stdin.end();
+  });
+
+  child.stdout.pipe(process.stdout);
+
+  return child;
+}
+
 // --- Main ---
 
 async function main() {
   const config = loadConfig();
   const b = config.browser || {};
   const port = b.debuggingPort || DEFAULT_PORT;
+  const lazyStart = b.lazyStart !== false; // default true
 
   // Direct connection mode: skip Chrome lifecycle management
   if (b.browserUrl) {
@@ -242,52 +372,22 @@ async function main() {
     return;
   }
 
-  let lock = readLock();
-  let needLaunch = true;
-
-  if (lock && isProcessAlive(lock.pid) && await probePort(lock.port || port)) {
-    lock.clients = (lock.clients || 0) + 1;
-    writeLock(lock);
-    needLaunch = false;
-    process.stderr.write(`[my-agent-browser] reusing Chrome (PID ${lock.pid}, port ${lock.port || port}), clients: ${lock.clients}\n`);
-  } else {
-    if (lock) {
-      process.stderr.write(`[my-agent-browser] stale lock detected, cleaning up\n`);
-      if (lock.pid && isProcessAlive(lock.pid)) {
-        try { process.kill(lock.pid, "SIGTERM"); } catch {}
-      }
-      deleteLock();
-    }
-  }
-
-  if (needLaunch) {
-    const pid = launchChrome(config, port);
-    process.stderr.write(`[my-agent-browser] launched Chrome (PID ${pid}, port ${port})\n`);
-
-    const ready = await waitForPort(port);
-    if (!ready || !isProcessAlive(pid)) {
-      process.stderr.write(
-        `[my-agent-browser] Chrome failed to start (port ${port} not reachable).\n` +
-        `If port ${port} is already in use by another process, change "debuggingPort" in ${configFile}\n`
-      );
-      if (isProcessAlive(pid)) {
-        try { process.kill(pid, "SIGTERM"); } catch {}
-      }
-      process.exit(1);
-    }
-
-    writeLock({ port, pid, clients: 1 });
-  }
-
   // Register cleanup
   process.on("exit", cleanup);
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
     process.on(sig, () => { cleanup(); process.exit(0); });
   }
 
-  // Start MCP server connecting to Chrome
-  const mcpArgs = buildMcpArgs(config, port);
-  const child = startMcp(mcpArgs);
+  let child;
+
+  if (lazyStart) {
+    process.stderr.write(`[my-agent-browser] lazy mode: Chrome will start on first tool call\n`);
+    child = startLazy(config, port);
+  } else {
+    await ensureChrome(config, port);
+    const mcpArgs = buildMcpArgs(config, port);
+    child = startMcp(mcpArgs);
+  }
 
   child.on("error", (err) => {
     process.stderr.write(`[my-agent-browser] spawn error: ${err.message}\n`);
