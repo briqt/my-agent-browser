@@ -4,7 +4,7 @@
     "headless": true,
     "proxy": "",
     "viewport": "1280x720",
-    "debuggingPort": 19222,
+    "debuggingPort": 39813,
     "extraArgs": [],
     "browserUrl": ""
   },

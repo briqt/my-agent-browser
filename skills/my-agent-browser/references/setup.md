@@ -100,7 +100,7 @@ Edit `~/.config/agent-skills/my-agent-browser/config.json`:
     "headless": true,
     "proxy": "",
     "viewport": "1280x720",
-    "debuggingPort": 19222,
+    "debuggingPort": 39813,
     "extraArgs": []
   },
   "mcp": {
@@ -118,7 +118,7 @@ Edit `~/.config/agent-skills/my-agent-browser/config.json`:
 | `browser.headless` | Run without visible window | `true` |
 | `browser.proxy` | HTTP proxy for all browser traffic | `""` (none) |
 | `browser.viewport` | Browser window size | `"1280x720"` |
-| `browser.debuggingPort` | Chrome remote debugging port (for multi-session sharing) | `19222` |
+| `browser.debuggingPort` | Chrome remote debugging port (for multi-session sharing) | `39813` |
 | `browser.extraArgs` | Additional Chrome flags (anti-detection, etc.) | `[]` |
 | `browser.browserUrl` | Connect to an existing Chrome instance (e.g., `http://127.0.0.1:9222`) | `""` (launch new) |
 | `mcp.features` | Extra chrome-devtools-mcp feature flags | `[]` |

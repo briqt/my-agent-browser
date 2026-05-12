@@ -14,7 +14,7 @@ const configDir =
 const configFile = path.join(configDir, "config.json");
 const lockFile = path.join(configDir, "browser.lock");
 
-const DEFAULT_PORT = 19222;
+const DEFAULT_PORT = 39813;
 
 function expandHome(p) {
   if (p.startsWith("~/") || p === "~") {
@@ -62,6 +62,7 @@ function readLock() {
 }
 
 function writeLock(data) {
+  fs.mkdirSync(configDir, { recursive: true });
   const tmp = lockFile + ".tmp." + process.pid;
   fs.writeFileSync(tmp, JSON.stringify(data));
   fs.renameSync(tmp, lockFile);
@@ -225,6 +226,22 @@ async function main() {
   const b = config.browser || {};
   const port = b.debuggingPort || DEFAULT_PORT;
 
+  // Direct connection mode: skip Chrome lifecycle management
+  if (b.browserUrl) {
+    process.stderr.write(`[my-agent-browser] direct mode: connecting to ${b.browserUrl}\n`);
+    const m = config.mcp || {};
+    const args = [`--browserUrl=${b.browserUrl}`];
+    for (const f of m.features || []) args.push(f);
+    for (const f of m.flags || []) args.push(f);
+    const child = startMcp(args);
+    child.on("error", (err) => {
+      process.stderr.write(`[my-agent-browser] spawn error: ${err.message}\n`);
+      process.exit(1);
+    });
+    child.on("exit", (code) => process.exit(code ?? 1));
+    return;
+  }
+
   let lock = readLock();
   let needLaunch = true;
 
@@ -248,9 +265,14 @@ async function main() {
     process.stderr.write(`[my-agent-browser] launched Chrome (PID ${pid}, port ${port})\n`);
 
     const ready = await waitForPort(port);
-    if (!ready) {
-      process.stderr.write(`[my-agent-browser] Chrome failed to start (port ${port} not reachable)\n`);
-      try { process.kill(pid, "SIGTERM"); } catch {}
+    if (!ready || !isProcessAlive(pid)) {
+      process.stderr.write(
+        `[my-agent-browser] Chrome failed to start (port ${port} not reachable).\n` +
+        `If port ${port} is already in use by another process, change "debuggingPort" in ${configFile}\n`
+      );
+      if (isProcessAlive(pid)) {
+        try { process.kill(pid, "SIGTERM"); } catch {}
+      }
       process.exit(1);
     }
 
