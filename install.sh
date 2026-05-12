@@ -3,7 +3,7 @@
 # Step 1 (npx skills add briqt/my-agent-browser -g) must be done separately.
 set -euo pipefail
 
-CONFIG_DIR="${MY_AGENT_BROWSER_HOME:-$HOME/.my-agent-browser}"
+CONFIG_DIR="${MY_AGENT_BROWSER_HOME:-$HOME/.config/agent-skills/my-agent-browser}"
 SKILL_DIR="$HOME/.agents/skills/my-agent-browser"
 
 echo "my-agent-browser — quick setup"

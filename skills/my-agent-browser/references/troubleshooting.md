@@ -70,7 +70,7 @@ If sites detect automation, add anti-detection flags to config:
 
 ### Using a proxy
 
-Set in config:
+Set in config (`~/.config/agent-skills/my-agent-browser/config.json`):
 ```json
 {
   "browser": {

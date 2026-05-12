@@ -1,9 +1,10 @@
 {
   "browser": {
-    "userDataDir": "~/.my-agent-browser/user-data",
+    "userDataDir": "~/.config/agent-skills/my-agent-browser/user-data",
     "headless": true,
     "proxy": "",
     "viewport": "1280x720",
+    "debuggingPort": 19222,
     "extraArgs": [],
     "browserUrl": ""
   },
