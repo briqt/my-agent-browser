@@ -15,6 +15,24 @@ const configFile = path.join(configDir, "config.json");
 const lockFile = path.join(configDir, "browser.lock");
 
 const DEFAULT_PORT = 39813;
+const MAX_RECOVERIES = 3;
+const PORT_POLL_INTERVAL_MS = 3000;
+const PORT_POLL_TIMEOUT_MS = 2000;
+
+// --- Chrome crash detection patterns ---
+const CRASH_PATTERNS = [
+  "Could not connect to Chrome",
+  "Failed to fetch browser webSocket URL",
+  "Target closed",
+  "Session closed",
+  "WebSocket is not open",
+  "Connection refused",
+];
+
+function isCrashError(text) {
+  if (!text) return false;
+  return CRASH_PATTERNS.some((p) => text.includes(p));
+}
 
 function expandHome(p) {
   if (p.startsWith("~/") || p === "~") {
@@ -24,7 +42,6 @@ function expandHome(p) {
 }
 
 function loadConfig() {
-  // Search: skill-local dev override, then standard data dir
   const skillDir = path.resolve(__dirname, "..");
   const devConfig = path.join(skillDir, ".config.json");
   const candidates = [devConfig, configFile];
@@ -195,24 +212,33 @@ function buildMcpArgs(config, port) {
   return args;
 }
 
+function spawnMcpChild(args) {
+  const bin = findMcpBin();
+  if (bin) {
+    return spawn(bin, args, { stdio: ["pipe", "pipe", "inherit"] });
+  }
+  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+  return spawn(npx, ["-y", "chrome-devtools-mcp@^0.25.0", ...args], { stdio: ["pipe", "pipe", "inherit"] });
+}
+
 function startMcp(args, { pipe = false } = {}) {
   const stdio = pipe ? ["pipe", "pipe", "inherit"] : "inherit";
   const bin = findMcpBin();
-  let child;
   if (bin) {
-    child = spawn(bin, args, { stdio });
-  } else {
-    const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-    child = spawn(npx, ["-y", "chrome-devtools-mcp@^0.25.0", ...args], { stdio });
+    return spawn(bin, args, { stdio });
   }
-  return child;
+  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+  return spawn(npx, ["-y", "chrome-devtools-mcp@^0.25.0", ...args], { stdio });
 }
 
 // --- Cleanup on exit ---
 
 let cleanedUp = false;
+let recovering = false; // suppresses cleanup during crash recovery
+
 function cleanup() {
   if (cleanedUp) return;
+  if (recovering) return; // don't decrement clients mid-recovery
   cleanedUp = true;
 
   const lock = readLock();
@@ -240,7 +266,6 @@ async function ensureChrome(config, port) {
     return;
   }
 
-  // Another process may have started Chrome between our check and now — probe first
   if (await probePort(port)) {
     process.stderr.write(`[my-agent-browser] Chrome already listening on port ${port}, reusing\n`);
     writeLock({ port, pid: lock ? lock.pid : 0, clients: (lock ? lock.clients || 0 : 0) + 1 });
@@ -273,79 +298,301 @@ async function ensureChrome(config, port) {
   writeLock({ port, pid, clients: 1 });
 }
 
-// --- Lazy start: stdin proxy with on-demand Chrome launch ---
+// --- Lazy start with crash recovery ---
+//
+// Detection: dual-mode
+//   1. stdout interception: parse each JSON-RPC response line for crash patterns
+//   2. Port monitor: poll Chrome debug port every PORT_POLL_INTERVAL_MS
+// Recovery: kill old child -> ensureChrome() -> spawn new child -> replay last request
+// The child exit handler is the single entry point for recovery logic.
 
-function startLazy(config, port) {
+function startLazyWithRecovery(config, port, { eager = false } = {}) {
   const mcpArgs = buildMcpArgs(config, port);
-  const child = startMcp(mcpArgs, { pipe: true });
 
-  // State: "pending" → "launching" → "ready"
-  let state = "pending";
-  let buffer = [];
+  // Lazy state: "pending" -> "launching" -> "ready"
+  // In eager mode, start directly in "ready" state (Chrome already running)
+  let lazyState = eager ? "ready" : "pending";
+  let lazyBuffer = eager ? null : [];
 
-  function flushBuffer() {
-    for (const chunk of buffer) child.stdin.write(chunk);
-    buffer = null;
+  // Recovery state (active once lazyState === "ready")
+  let child = null;
+  let portDead = false;
+  let recoveryCount = 0;
+  let recoveryDisabled = false;
+  let portMonitorTimer = null;
+  let stdinBuffer = [];
+  let lastSentRequest = null;
+  let stdinPartial = "";
+  let stdoutPartial = "";
+  let sessionEnded = false;
+
+  // --- Detect Chrome crash patterns in a stdout line ---
+
+  function detectCrashInLine(line) {
+    try {
+      const msg = JSON.parse(line);
+      if (msg.error && msg.error.message && isCrashError(msg.error.message)) return true;
+      if (msg.result && Array.isArray(msg.result.content)) {
+        for (const item of msg.result.content) {
+          if (item.type === "text" && isCrashError(item.text)) return true;
+        }
+      }
+    } catch {}
+    return false;
   }
 
-  function switchToPassthrough() {
-    state = "ready";
-    flushBuffer();
-    process.stdin.pipe(child.stdin);
+  // --- Spawn child and wire stdout + exit handler ---
+
+  function spawnAndWire() {
+    child = spawnMcpChild(mcpArgs);
+    stdoutPartial = "";
+
+    // stdout relay: line-by-line with crash error detection
+    child.stdout.on("data", (chunk) => {
+      stdoutPartial += chunk.toString();
+      const lines = stdoutPartial.split("\n");
+      stdoutPartial = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) { process.stdout.write("\n"); continue; }
+
+        // Detect Chrome crash errors in responses (only in ready state)
+        if (lazyState === "ready" && !portDead && !recoveryDisabled && detectCrashInLine(line)) {
+          process.stderr.write(`[my-agent-browser] stdout: Chrome crash error detected in response\n`);
+          portDead = true;
+          recovering = true;
+          try { child.kill("SIGTERM"); } catch {}
+          setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 2000).unref();
+          return; // exit handler will trigger recovery
+        }
+
+        process.stdout.write(line + "\n");
+      }
+    });
+
+    child.stdout.on("end", () => {
+      if (stdoutPartial) {
+        process.stdout.write(stdoutPartial);
+        stdoutPartial = "";
+      }
+    });
+
+    child.on("exit", (code, signal) => {
+      if (portDead && !recoveryDisabled && lazyState === "ready") {
+        performRecovery();
+      } else {
+        cleanup();
+        process.exit(code ?? 1);
+      }
+    });
+
+    child.on("error", (err) => {
+      if (portDead && !recoveryDisabled) return;
+      process.stderr.write(`[my-agent-browser] child error: ${err.message}\n`);
+      cleanup();
+      process.exit(1);
+    });
   }
 
-  async function onToolsCall(line) {
-    state = "launching";
-    buffer.push(line + "\n");
+  // --- Port monitor (proactive crash detection) ---
+
+  function startPortMonitor() {
+    if (portMonitorTimer) return;
+    portMonitorTimer = setInterval(async () => {
+      if (portDead) return;
+      if (recoveryDisabled) return;
+      if (lazyState !== "ready") return;
+
+      const alive = await probePort(port, PORT_POLL_TIMEOUT_MS);
+      if (!alive) {
+        // Double-check to avoid false positives
+        await new Promise((r) => setTimeout(r, 500));
+        const stillDead = !(await probePort(port, PORT_POLL_TIMEOUT_MS));
+        if (!stillDead) return;
+
+        process.stderr.write(`[my-agent-browser] port monitor: Chrome not responding on port ${port}\n`);
+        portDead = true;
+        recovering = true;
+
+        try { child.kill("SIGTERM"); } catch {}
+        setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 2000).unref();
+      }
+    }, PORT_POLL_INTERVAL_MS);
+    if (portMonitorTimer.unref) portMonitorTimer.unref();
+  }
+
+  // --- Recovery (called from child exit handler) ---
+
+  async function performRecovery() {
+    recoveryCount++;
+    if (recoveryCount > MAX_RECOVERIES) {
+      process.stderr.write(`[my-agent-browser] max recovery attempts (${MAX_RECOVERIES}) reached, giving up\n`);
+      recoveryDisabled = true;
+      recovering = false;
+      portDead = false;
+      cleanup();
+      process.exit(1);
+    }
+
+    process.stderr.write(`[my-agent-browser] recovery attempt ${recoveryCount}/${MAX_RECOVERIES}...\n`);
+
+    try {
+      await ensureChrome(config, port);
+    } catch (err) {
+      process.stderr.write(`[my-agent-browser] recovery: Chrome relaunch failed: ${err.message}\n`);
+      recoveryDisabled = true;
+      recovering = false;
+      portDead = false;
+      cleanup();
+      process.exit(1);
+    }
+
+    spawnAndWire();
+    await new Promise((r) => setTimeout(r, 1000));
+
+    // Replay the last tools/call request
+    if (lastSentRequest && child.stdin.writable) {
+      process.stderr.write(`[my-agent-browser] recovery: replaying last request\n`);
+      child.stdin.write(lastSentRequest + "\n");
+    }
+
+    // Flush buffered stdin
+    if (stdinBuffer.length > 0) {
+      process.stderr.write(`[my-agent-browser] recovery: flushing ${stdinBuffer.length} buffered stdin chunks\n`);
+      for (const chunk of stdinBuffer) {
+        if (child.stdin.writable) child.stdin.write(chunk);
+      }
+      stdinBuffer = [];
+    }
+
+    if (sessionEnded && child.stdin.writable) {
+      child.stdin.end();
+    }
+
+    portDead = false;
+    recovering = false;
+    process.stderr.write(`[my-agent-browser] recovery: complete, session restored\n`);
+  }
+
+  // --- Stdin handling (combines lazy detection + recovery buffering + relay) ---
+
+  function handleStdinData(chunk) {
+    const text = chunk.toString();
+
+    // During recovery, buffer everything
+    if (portDead || recovering) {
+      stdinBuffer.push(text);
+      return;
+    }
+
+    // Lazy: still waiting for Chrome launch to complete
+    if (lazyState === "launching") {
+      lazyBuffer.push(text);
+      return;
+    }
+
+    // Lazy: scanning for first tools/call
+    if (lazyState === "pending") {
+      stdinPartial += text;
+      const lines = stdinPartial.split("\n");
+      stdinPartial = lines.pop();
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line.trim()) {
+          if (child && child.stdin && child.stdin.writable) child.stdin.write("\n");
+          continue;
+        }
+        let msg;
+        try { msg = JSON.parse(line); } catch {
+          if (child && child.stdin && child.stdin.writable) child.stdin.write(line + "\n");
+          continue;
+        }
+
+        if (msg.method === "tools/call") {
+          // Buffer this line and everything remaining
+          lazyBuffer.push(line + "\n");
+          if (stdinPartial) { lazyBuffer.push(stdinPartial); stdinPartial = ""; }
+          for (let j = i + 1; j < lines.length; j++) {
+            lazyBuffer.push(lines[j] + "\n");
+          }
+          onFirstToolsCall();
+          return;
+        }
+        if (child && child.stdin && child.stdin.writable) child.stdin.write(line + "\n");
+      }
+      return;
+    }
+
+    // lazyState === "ready": normal relay with request tracking
+    stdinPartial += text;
+    const lines = stdinPartial.split("\n");
+    stdinPartial = lines.pop();
+
+    for (const line of lines) {
+      if (line.trim()) {
+        try {
+          const msg = JSON.parse(line);
+          if (msg.method === "tools/call") {
+            lastSentRequest = line;
+          }
+        } catch {}
+      }
+      if (child && child.stdin && child.stdin.writable) {
+        child.stdin.write(line + "\n");
+      }
+    }
+  }
+
+  async function onFirstToolsCall() {
+    lazyState = "launching";
     process.stderr.write(`[my-agent-browser] first tools/call detected, launching Chrome...\n`);
     try {
       await ensureChrome(config, port);
     } catch (err) {
       process.stderr.write(`[my-agent-browser] Chrome launch failed: ${err.message}\n`);
     }
-    switchToPassthrough();
+
+    // Transition to ready and flush lazy buffer
+    lazyState = "ready";
+    for (const chunk of lazyBuffer) {
+      if (typeof chunk === "string") {
+        const bufLines = chunk.split("\n");
+        for (const bl of bufLines) {
+          if (bl.trim()) {
+            try {
+              const m = JSON.parse(bl);
+              if (m.method === "tools/call") lastSentRequest = bl;
+            } catch {}
+          }
+        }
+      }
+      if (child && child.stdin && child.stdin.writable) child.stdin.write(chunk);
+    }
+    lazyBuffer = null;
+
+    // Start port monitor now that Chrome is running
+    startPortMonitor();
   }
 
-  // Parse stdin line by line while in pending/launching state
-  let partial = "";
-  process.stdin.on("data", (chunk) => {
-    if (state === "ready") return; // piped, shouldn't fire but guard anyway
+  // --- Initialize ---
+  spawnAndWire();
 
-    if (state === "launching") {
-      buffer.push(chunk);
-      return;
-    }
-
-    // state === "pending": inspect each line
-    partial += chunk.toString();
-    const lines = partial.split("\n");
-    partial = lines.pop(); // incomplete trailing line
-
-    for (const line of lines) {
-      if (!line.trim()) { child.stdin.write("\n"); continue; }
-      let msg;
-      try { msg = JSON.parse(line); } catch { child.stdin.write(line + "\n"); continue; }
-
-      if (msg.method === "tools/call") {
-        // Buffer remaining lines too
-        if (partial) { buffer.push(partial); partial = ""; }
-        for (let i = lines.indexOf(line) + 1; i < lines.length; i++) {
-          buffer.push(lines[i] + "\n");
-        }
-        onToolsCall(line);
-        return;
-      }
-      child.stdin.write(line + "\n");
-    }
-  });
-
+  process.stdin.on("data", handleStdinData);
   process.stdin.on("end", () => {
-    if (child.stdin.writable) child.stdin.end();
+    sessionEnded = true;
+    if (stdinPartial && child && child.stdin && child.stdin.writable) {
+      child.stdin.write(stdinPartial);
+      stdinPartial = "";
+    }
+    if (child && child.stdin && child.stdin.writable) {
+      child.stdin.end();
+    }
   });
 
-  child.stdout.pipe(process.stdout);
-
-  return child;
+  // In eager mode, Chrome is already running — start monitoring immediately
+  if (eager) {
+    startPortMonitor();
+  }
 }
 
 // --- Main ---
@@ -378,26 +625,14 @@ async function main() {
     process.on(sig, () => { cleanup(); process.exit(0); });
   }
 
-  let child;
-
   if (lazyStart) {
-    process.stderr.write(`[my-agent-browser] lazy mode: Chrome will start on first tool call\n`);
-    child = startLazy(config, port);
+    process.stderr.write(`[my-agent-browser] lazy mode: Chrome will start on first tool call (crash recovery enabled)\n`);
+    startLazyWithRecovery(config, port);
   } else {
     await ensureChrome(config, port);
-    const mcpArgs = buildMcpArgs(config, port);
-    child = startMcp(mcpArgs);
+    process.stderr.write(`[my-agent-browser] eager mode: Chrome ready (crash recovery enabled)\n`);
+    startLazyWithRecovery(config, port, { eager: true });
   }
-
-  child.on("error", (err) => {
-    process.stderr.write(`[my-agent-browser] spawn error: ${err.message}\n`);
-    cleanup();
-    process.exit(1);
-  });
-  child.on("exit", (code) => {
-    cleanup();
-    process.exit(code ?? 1);
-  });
 }
 
 main().catch((err) => {
