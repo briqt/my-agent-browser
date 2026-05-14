@@ -254,17 +254,41 @@ async function ensureChrome(config, port) {
 
   const ready = await waitForPort(port);
   if (!ready || !isProcessAlive(pid)) {
-    process.stderr.write(
-      `[my-agent-browser] Chrome failed to start (port ${port} not reachable).\n` +
-      `If port ${port} is already in use, change "debuggingPort" in ${configFile}\n`
-    );
     if (isProcessAlive(pid)) {
       try { process.kill(pid, "SIGTERM"); } catch {}
     }
-    process.exit(1);
+    throw new Error(`Chrome failed to start (port ${port} not reachable)`);
   }
 
   writeLock({ port, pid, clients: 1 });
+}
+
+// --- Chrome connection error patterns ---
+const CHROME_DEAD_PATTERNS = [
+  "Could not connect to Chrome",
+  "Failed to fetch browser webSocket URL",
+  "Target closed",
+  "Session closed",
+  "WebSocket is not open",
+  "Connection refused",
+];
+
+function isChromeDeadError(text) {
+  if (!text) return false;
+  return CHROME_DEAD_PATTERNS.some((p) => text.includes(p));
+}
+
+function responseHasChromeError(line) {
+  try {
+    const msg = JSON.parse(line);
+    if (msg.error && msg.error.message && isChromeDeadError(msg.error.message)) return true;
+    if (msg.result && Array.isArray(msg.result.content)) {
+      for (const item of msg.result.content) {
+        if (item.type === "text" && isChromeDeadError(item.text)) return true;
+      }
+    }
+  } catch {}
+  return false;
 }
 
 // --- Lazy start: stdin proxy with on-demand Chrome launch ---
@@ -276,6 +300,7 @@ function startLazy(config, port) {
   let state = "pending"; // "pending" → "launching" → "ready"
   let buffer = [];
   let partial = "";
+  let relaunching = false;
 
   function flushAndPipe() {
     state = "ready";
@@ -294,6 +319,21 @@ function startLazy(config, port) {
       process.stderr.write(`[my-agent-browser] Chrome launch failed: ${err.message}\n`);
     }
     flushAndPipe();
+  }
+
+  // Silently relaunch Chrome when a connection error is detected
+  async function relaunchChrome() {
+    if (relaunching) return;
+    relaunching = true;
+    process.stderr.write(`[my-agent-browser] Chrome connection lost, relaunching...\n`);
+    try {
+      deleteLock();
+      await ensureChrome(config, port);
+      process.stderr.write(`[my-agent-browser] Chrome relaunched, next tool call will reconnect\n`);
+    } catch (err) {
+      process.stderr.write(`[my-agent-browser] Chrome relaunch failed: ${err.message}\n`);
+    }
+    relaunching = false;
   }
 
   process.stdin.on("data", (chunk) => {
@@ -329,7 +369,40 @@ function startLazy(config, port) {
     if (child.stdin.writable) child.stdin.end();
   });
 
-  child.stdout.pipe(process.stdout);
+  // stdout proxy: relay lines, detect Chrome errors, trigger relaunch
+  let stdoutPartial = "";
+  child.stdout.on("data", (chunk) => {
+    stdoutPartial += chunk.toString();
+    const lines = stdoutPartial.split("\n");
+    stdoutPartial = lines.pop();
+    for (const line of lines) {
+      if (state === "ready" && responseHasChromeError(line)) {
+        relaunchChrome();
+        // Rewrite the error message to be actionable for the agent
+        try {
+          const msg = JSON.parse(line);
+          const rewritten = {
+            ...msg,
+            result: {
+              content: [{ type: "text", text: "Chrome browser was closed. It is being relaunched automatically. Please retry this tool call." }],
+              isError: true,
+            },
+          };
+          if (msg.error) {
+            delete rewritten.error;
+          }
+          process.stdout.write(JSON.stringify(rewritten) + "\n");
+        } catch {
+          process.stdout.write(line + "\n");
+        }
+        continue;
+      }
+      process.stdout.write(line + "\n");
+    }
+  });
+  child.stdout.on("end", () => {
+    if (stdoutPartial) { process.stdout.write(stdoutPartial); stdoutPartial = ""; }
+  });
 
   return child;
 }
