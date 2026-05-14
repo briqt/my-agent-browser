@@ -337,6 +337,7 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
   let lastSentRequest = null;
   let initHandshake = null; // captured initialize + notifications/initialized
   let suppressResponseIds = new Set(); // IDs whose responses should not be forwarded
+  let crashDetectionPaused = false; // temporarily suppress crash detection after recovery
   let stdinPartial = "";
   let stdoutPartial = "";
   let sessionEnded = false;
@@ -382,7 +383,7 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
         }
 
         // Detect Chrome crash errors in responses (only in ready state)
-        if (lazyState === "ready" && !portDead && !recoveryDisabled && detectCrashInLine(line)) {
+        if (lazyState === "ready" && !portDead && !recoveryDisabled && !crashDetectionPaused && detectCrashInLine(line)) {
           process.stderr.write(`[my-agent-browser] stdout: Chrome crash error detected, forwarding error then recovering\n`);
           // Forward the error response to the client FIRST so it doesn't timeout
           process.stdout.write(line + "\n");
@@ -489,10 +490,14 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
       await new Promise((r) => setTimeout(r, 500));
     }
 
-    // Replay the last tools/call request
+    // Replay the last tools/call so the agent gets a response (even if it's an error).
+    // Temporarily pause crash detection to avoid re-triggering recovery from the
+    // replayed request's error response.
     if (lastSentRequest && child.stdin.writable) {
       process.stderr.write(`[my-agent-browser] recovery: replaying last request\n`);
+      crashDetectionPaused = true;
       child.stdin.write(lastSentRequest + "\n");
+      setTimeout(() => { crashDetectionPaused = false; }, 5000);
     }
 
     // Flush buffered stdin
