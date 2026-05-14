@@ -271,6 +271,10 @@ const CHROME_DEAD_PATTERNS = [
   "Session closed",
   "WebSocket is not open",
   "Connection refused",
+  "Timed out",
+  "timed out",
+  "ETIMEDOUT",
+  "ECONNREFUSED",
 ];
 
 function isChromeDeadError(text) {
@@ -348,15 +352,16 @@ function startLazy(config, port) {
     const lines = partial.split("\n");
     partial = lines.pop();
 
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       if (!line.trim()) { child.stdin.write("\n"); continue; }
       let msg;
       try { msg = JSON.parse(line); } catch { child.stdin.write(line + "\n"); continue; }
 
       if (msg.method === "tools/call") {
         if (partial) { buffer.push(partial); partial = ""; }
-        for (let i = lines.indexOf(line) + 1; i < lines.length; i++) {
-          buffer.push(lines[i] + "\n");
+        for (let j = i + 1; j < lines.length; j++) {
+          buffer.push(lines[j] + "\n");
         }
         onToolsCall(line);
         return;
@@ -384,7 +389,7 @@ function startLazy(config, port) {
           const rewritten = {
             ...msg,
             result: {
-              content: [{ type: "text", text: "Chrome browser was closed. It is being relaunched automatically. Please retry this tool call." }],
+              content: [{ type: "text", text: "Chrome was closed or crashed. All open pages and browser state are lost. Chrome is being relaunched automatically — please navigate to your target URL again." }],
               isError: true,
             },
           };
