@@ -335,6 +335,8 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
   let portMonitorTimer = null;
   let stdinBuffer = [];
   let lastSentRequest = null;
+  let initHandshake = null; // captured initialize + notifications/initialized
+  let suppressResponseIds = new Set(); // IDs whose responses should not be forwarded
   let stdinPartial = "";
   let stdoutPartial = "";
   let sessionEnded = false;
@@ -368,6 +370,17 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
       for (const line of lines) {
         if (!line.trim()) { process.stdout.write("\n"); continue; }
 
+        // Suppress responses to recovery-replayed init handshake
+        if (suppressResponseIds.size > 0) {
+          try {
+            const msg = JSON.parse(line);
+            if (msg.id !== undefined && suppressResponseIds.has(msg.id)) {
+              suppressResponseIds.delete(msg.id);
+              continue;
+            }
+          } catch {}
+        }
+
         // Detect Chrome crash errors in responses (only in ready state)
         if (lazyState === "ready" && !portDead && !recoveryDisabled && detectCrashInLine(line)) {
           process.stderr.write(`[my-agent-browser] stdout: Chrome crash error detected, forwarding error then recovering\n`);
@@ -392,7 +405,7 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
     });
 
     child.on("exit", (code, signal) => {
-      if (portDead && !recoveryDisabled && lazyState === "ready") {
+      if ((portDead || recovering) && !recoveryDisabled && lazyState === "ready") {
         performRecovery();
       } else {
         cleanup();
@@ -432,7 +445,6 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
         setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 2000).unref();
       }
     }, PORT_POLL_INTERVAL_MS);
-    if (portMonitorTimer.unref) portMonitorTimer.unref();
   }
 
   // --- Recovery (called from child exit handler) ---
@@ -463,7 +475,19 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
     }
 
     spawnAndWire();
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Re-send MCP handshake so the new child is in initialized state
+    if (initHandshake && child.stdin.writable) {
+      for (const line of initHandshake) {
+        try {
+          const msg = JSON.parse(line);
+          if (msg.id !== undefined) suppressResponseIds.add(msg.id);
+        } catch {}
+        child.stdin.write(line + "\n");
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
 
     // Replay the last tools/call request
     if (lastSentRequest && child.stdin.writable) {
@@ -534,6 +558,11 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
           onFirstToolsCall();
           return;
         }
+        // Capture init handshake for recovery replay
+        if (msg.method === "initialize" || msg.method === "notifications/initialized") {
+          if (!initHandshake) initHandshake = [];
+          initHandshake.push(line);
+        }
         if (child && child.stdin && child.stdin.writable) child.stdin.write(line + "\n");
       }
       return;
@@ -550,6 +579,10 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
           const msg = JSON.parse(line);
           if (msg.method === "tools/call") {
             lastSentRequest = line;
+          }
+          if (msg.method === "initialize" || msg.method === "notifications/initialized") {
+            if (!initHandshake) initHandshake = [];
+            initHandshake.push(line);
           }
         } catch {}
       }
