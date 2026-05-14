@@ -95,11 +95,15 @@ function isProcessAlive(pid) {
 
 function probePort(port, timeoutMs = 2000) {
   return new Promise((resolve) => {
+    const net = require("net");
     const opts = {
       hostname: "127.0.0.1",
       port,
       path: "/json/version",
       timeout: timeoutMs,
+      createConnection: (connOpts) => {
+        return net.connect({ host: "127.0.0.1", port });
+      },
     };
     const req = http.get(opts, (res) => {
       if (res.statusCode !== 200) { res.resume(); resolve(false); return; }
@@ -280,19 +284,28 @@ async function ensureChrome(config, port) {
     deleteLock();
   }
 
+  // Clean stale Chrome profile locks before launching
+  const dataDir = (config.browser || {}).userDataDir
+    ? expandHome((config.browser || {}).userDataDir)
+    : path.join(configDir, "user-data");
+  for (const lockName of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
+    try { fs.unlinkSync(path.join(dataDir, lockName)); } catch {}
+  }
+
   const pid = launchChrome(config, port);
   process.stderr.write(`[my-agent-browser] launched Chrome (PID ${pid}, port ${port})\n`);
 
   const ready = await waitForPort(port);
   if (!ready || !isProcessAlive(pid)) {
+    const msg = `Chrome failed to start (port ${port} not reachable).`;
     process.stderr.write(
-      `[my-agent-browser] Chrome failed to start (port ${port} not reachable).\n` +
+      `[my-agent-browser] ${msg}\n` +
       `If port ${port} is already in use by another process, change "debuggingPort" in ${configFile}\n`
     );
     if (isProcessAlive(pid)) {
       try { process.kill(pid, "SIGTERM"); } catch {}
     }
-    process.exit(1);
+    throw new Error(msg);
   }
 
   writeLock({ port, pid, clients: 1 });
@@ -357,7 +370,9 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
 
         // Detect Chrome crash errors in responses (only in ready state)
         if (lazyState === "ready" && !portDead && !recoveryDisabled && detectCrashInLine(line)) {
-          process.stderr.write(`[my-agent-browser] stdout: Chrome crash error detected in response\n`);
+          process.stderr.write(`[my-agent-browser] stdout: Chrome crash error detected, forwarding error then recovering\n`);
+          // Forward the error response to the client FIRST so it doesn't timeout
+          process.stdout.write(line + "\n");
           portDead = true;
           recovering = true;
           try { child.kill("SIGTERM"); } catch {}
@@ -425,12 +440,13 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
   async function performRecovery() {
     recoveryCount++;
     if (recoveryCount > MAX_RECOVERIES) {
-      process.stderr.write(`[my-agent-browser] max recovery attempts (${MAX_RECOVERIES}) reached, giving up\n`);
+      process.stderr.write(`[my-agent-browser] max recovery attempts (${MAX_RECOVERIES}) reached, falling back to passthrough\n`);
       recoveryDisabled = true;
       recovering = false;
       portDead = false;
-      cleanup();
-      process.exit(1);
+      // Don't exit - stay alive in degraded mode so manual Chrome restart can work
+      spawnAndWire();
+      return;
     }
 
     process.stderr.write(`[my-agent-browser] recovery attempt ${recoveryCount}/${MAX_RECOVERIES}...\n`);
@@ -439,11 +455,11 @@ function startLazyWithRecovery(config, port, { eager = false } = {}) {
       await ensureChrome(config, port);
     } catch (err) {
       process.stderr.write(`[my-agent-browser] recovery: Chrome relaunch failed: ${err.message}\n`);
-      recoveryDisabled = true;
-      recovering = false;
-      portDead = false;
-      cleanup();
-      process.exit(1);
+      // Retry by recursing (respects MAX_RECOVERIES)
+      portDead = true;
+      recovering = true;
+      await performRecovery();
+      return;
     }
 
     spawnAndWire();
