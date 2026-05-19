@@ -184,10 +184,15 @@ function findMcpBin() {
     }).trim();
     if (!result) return null;
     const lines = result.split(/\r?\n/);
-    // On Windows, spawn cannot execute extensionless files; prefer .cmd
     if (process.platform === "win32") {
-      const cmd_line = lines.find((l) => l.endsWith(".cmd"));
-      if (cmd_line) return cmd_line;
+      // On Windows, .cmd wrappers can't be spawned directly.
+      // Resolve the underlying .js entry point next to the .cmd file.
+      const cmdPath = lines.find((l) => l.endsWith(".cmd"));
+      if (cmdPath) {
+        const dir = path.dirname(cmdPath);
+        const jsEntry = path.join(dir, "node_modules", "chrome-devtools-mcp", "build", "src", "bin", "chrome-devtools-mcp.js");
+        if (fs.existsSync(jsEntry)) return jsEntry;
+      }
     }
     return lines[0];
   } catch {}
@@ -205,7 +210,11 @@ function buildMcpArgs(config, port) {
 function startMcp(args, { pipe = false } = {}) {
   const stdio = pipe ? ["pipe", "pipe", "inherit"] : "inherit";
   const bin = findMcpBin();
-  if (bin) return spawn(bin, args, { stdio });
+  if (bin) {
+    // If we resolved to a .js file, run it with node
+    if (bin.endsWith(".js")) return spawn(process.execPath, [bin, ...args], { stdio });
+    return spawn(bin, args, { stdio });
+  }
   const npx = process.platform === "win32" ? "npx.cmd" : "npx";
   return spawn(npx, ["-y", "chrome-devtools-mcp@^0.25.0", ...args], { stdio });
 }
