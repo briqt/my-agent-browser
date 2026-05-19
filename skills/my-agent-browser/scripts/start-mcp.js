@@ -185,14 +185,12 @@ function findMcpBin() {
     if (!result) return null;
     const lines = result.split(/\r?\n/);
     if (process.platform === "win32") {
-      // On Windows, .cmd wrappers can't be spawned directly.
-      // Resolve the underlying .js entry point next to the .cmd file.
-      const cmdPath = lines.find((l) => l.endsWith(".cmd"));
-      if (cmdPath) {
-        const dir = path.dirname(cmdPath);
-        const jsEntry = path.join(dir, "node_modules", "chrome-devtools-mcp", "build", "src", "bin", "chrome-devtools-mcp.js");
-        if (fs.existsSync(jsEntry)) return jsEntry;
-      }
+      // On Windows, spawn cannot execute .cmd or extensionless shims directly.
+      // Resolve the underlying .js entry point from the npm prefix directory.
+      const anyPath = lines[0];
+      const dir = path.dirname(anyPath);
+      const jsEntry = path.join(dir, "node_modules", "chrome-devtools-mcp", "build", "src", "bin", "chrome-devtools-mcp.js");
+      if (fs.existsSync(jsEntry)) return jsEntry;
     }
     return lines[0];
   } catch {}
