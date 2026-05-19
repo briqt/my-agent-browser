@@ -182,7 +182,14 @@ function findMcpBin() {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
-    if (result) return result.split(/\r?\n/)[0];
+    if (!result) return null;
+    const lines = result.split(/\r?\n/);
+    // On Windows, spawn cannot execute extensionless files; prefer .cmd
+    if (process.platform === "win32") {
+      const cmd_line = lines.find((l) => l.endsWith(".cmd"));
+      if (cmd_line) return cmd_line;
+    }
+    return lines[0];
   } catch {}
   return null;
 }
