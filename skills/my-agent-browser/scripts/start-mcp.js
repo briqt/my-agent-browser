@@ -132,6 +132,17 @@ function findChrome() {
     if (fs.existsSync(macPath)) return macPath;
   }
 
+  if (process.platform === "win32") {
+    const winPaths = [
+      path.join(process.env.PROGRAMFILES || "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe"),
+      path.join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Google", "Chrome", "Application", "chrome.exe"),
+      path.join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "Application", "chrome.exe"),
+    ];
+    for (const p of winPaths) {
+      if (fs.existsSync(p)) return p;
+    }
+  }
+
   return null;
 }
 
@@ -143,7 +154,16 @@ function launchChrome(config, port) {
 
   const chromePath = findChrome();
   if (!chromePath) {
-    process.stderr.write("[my-agent-browser] Chrome not found.\n");
+    process.stderr.write(
+      `[my-agent-browser] ERROR: Chrome/Chromium not found.\n` +
+      `  Searched PATH for: chrome.exe, google-chrome.exe\n` +
+      `  Also checked standard install paths (Program Files, LocalAppData).\n` +
+      `  Possible fixes:\n` +
+      `    1. Install Google Chrome\n` +
+      `    2. Add Chrome to your PATH\n` +
+      `    3. Set "browserUrl" in config.json to connect to an existing Chrome instance\n` +
+      `       e.g. "browserUrl": "http://127.0.0.1:9222"\n`
+    );
     process.exit(1);
   }
 
