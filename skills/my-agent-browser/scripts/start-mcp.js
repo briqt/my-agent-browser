@@ -154,17 +154,17 @@ function launchChrome(config, port) {
 
   const chromePath = findChrome();
   if (!chromePath) {
-    process.stderr.write(
-      `[my-agent-browser] ERROR: Chrome/Chromium not found.\n` +
-      `  Searched PATH for: chrome.exe, google-chrome.exe\n` +
-      `  Also checked standard install paths (Program Files, LocalAppData).\n` +
-      `  Possible fixes:\n` +
-      `    1. Install Google Chrome\n` +
-      `    2. Add Chrome to your PATH\n` +
-      `    3. Set "browserUrl" in config.json to connect to an existing Chrome instance\n` +
-      `       e.g. "browserUrl": "http://127.0.0.1:9222"\n`
+    const searchedPaths = process.platform === "darwin"
+      ? "/Applications/Google Chrome.app, google-chrome, chromium (via PATH)"
+      : process.platform === "win32"
+        ? "Program Files, LocalAppData, chrome.exe / google-chrome.exe (via PATH)"
+        : "google-chrome, google-chrome-stable, chromium-browser, chromium (via PATH)";
+    throw new Error(
+      `Chrome/Chromium not found. Searched: ${searchedPaths}. ` +
+      `Fix: (1) Install Google Chrome, (2) add it to PATH, or ` +
+      `(3) set "browserUrl" in ~/.config/agent-skills/my-agent-browser/config.json ` +
+      `to connect to an existing instance (e.g. "browserUrl": "http://127.0.0.1:9222").`
     );
-    process.exit(1);
   }
 
   const args = [
@@ -335,10 +335,11 @@ function startLazy(config, port) {
   const mcpArgs = buildMcpArgs(config, port);
   const child = startMcp(mcpArgs, { pipe: true });
 
-  let state = "pending"; // "pending" → "launching" → "ready"
+  let state = "pending"; // "pending" → "launching" → "ready" | "failed"
   let buffer = [];
   let partial = "";
   let relaunching = false;
+  let launchError = null;
 
   function flushAndPipe() {
     state = "ready";
@@ -347,15 +348,44 @@ function startLazy(config, port) {
     process.stdin.pipe(child.stdin);
   }
 
+  function sendMcpError(requestLine, errorMessage) {
+    try {
+      const msg = JSON.parse(requestLine);
+      if (msg.id != null) {
+        const response = {
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: {
+            content: [{ type: "text", text: `[my-agent-browser] ${errorMessage}` }],
+            isError: true,
+          },
+        };
+        process.stdout.write(JSON.stringify(response) + "\n");
+      }
+    } catch {}
+  }
+
   async function onToolsCall(line) {
     state = "launching";
-    buffer.push(line + "\n");
     process.stderr.write(`[my-agent-browser] first tools/call detected, launching Chrome...\n`);
     try {
       await ensureChrome(config, port);
     } catch (err) {
+      launchError = err.message;
+      state = "failed";
       process.stderr.write(`[my-agent-browser] Chrome launch failed: ${err.message}\n`);
+      sendMcpError(line, err.message);
+      for (const chunk of buffer) {
+        const lines = chunk.toString().split("\n");
+        for (const l of lines) {
+          if (!l.trim()) continue;
+          try { const m = JSON.parse(l); if (m.method === "tools/call") sendMcpError(l, err.message); } catch {}
+        }
+      }
+      buffer = null;
+      return;
     }
+    buffer.push(line + "\n");
     flushAndPipe();
   }
 
@@ -376,6 +406,19 @@ function startLazy(config, port) {
 
   process.stdin.on("data", (chunk) => {
     if (state === "ready") return;
+
+    if (state === "failed") {
+      const text = chunk.toString();
+      const lines = text.split("\n");
+      for (const l of lines) {
+        if (!l.trim()) continue;
+        try {
+          const m = JSON.parse(l);
+          if (m.method === "tools/call") sendMcpError(l, launchError);
+        } catch {}
+      }
+      return;
+    }
 
     if (state === "launching") {
       buffer.push(chunk);
@@ -499,6 +542,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  process.stderr.write(`[my-agent-browser] fatal: ${err.message}\n`);
+  process.stderr.write(`[my-agent-browser] FATAL: ${err.message}\n`);
+  process.stderr.write(`[my-agent-browser] The MCP server cannot start. Fix the issue above and restart your agent session.\n`);
   process.exit(1);
 });

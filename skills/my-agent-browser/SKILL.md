@@ -26,18 +26,12 @@ If browser MCP tools (`navigate_page`, `take_snapshot`, `click`, `fill`) are not
    mkdir -p ~/.config/agent-skills/my-agent-browser
    cp <skill-dir>/config.example.json ~/.config/agent-skills/my-agent-browser/config.json
    ```
-3. Register the MCP server in your agent config:
-   ```json
-   {
-     "mcpServers": {
-       "browser": {
-         "command": "node",
-         "args": ["<skill-dir>/scripts/start-mcp.js"]
-       }
-     }
-   }
-   ```
-   See [references/setup.md](references/setup.md) for platform-specific paths.
+3. Register the MCP server in your agent/IDE. The MCP server entry is:
+   - Name: `browser`
+   - Command: `node`
+   - Args: `["<skill-dir>/scripts/start-mcp.js"]` (resolve `<skill-dir>` to the actual absolute path)
+
+   How to register depends on your environment — consult your agent's `/help`, official docs, or settings UI to find where MCP servers are configured.
 4. Restart the agent session
 
 ## Core Workflow
