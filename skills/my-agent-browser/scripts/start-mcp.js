@@ -110,13 +110,14 @@ async function waitForPort(port, maxWaitMs = 10000) {
 // --- Chrome launcher ---
 
 function findChrome() {
-  const names = process.platform === "win32"
-    ? ["chrome.exe", "google-chrome.exe"]
+  // PATH-searchable names, ordered by preference
+  const pathNames = process.platform === "win32"
+    ? ["chrome.exe", "google-chrome.exe", "msedge.exe", "chromium.exe", "brave.exe"]
     : process.platform === "darwin"
-      ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "google-chrome", "chromium"]
-      : ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"];
+      ? ["google-chrome", "chromium", "microsoft-edge"]
+      : ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium", "microsoft-edge-stable", "microsoft-edge", "brave-browser"];
 
-  for (const name of names) {
+  for (const name of pathNames) {
     try {
       const cmd = process.platform === "win32" ? "where" : "which";
       const result = execFileSync(cmd, [name], {
@@ -127,18 +128,50 @@ function findChrome() {
     } catch {}
   }
 
+  // Well-known install paths per platform
   if (process.platform === "darwin") {
-    const macPath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-    if (fs.existsSync(macPath)) return macPath;
+    const macPaths = [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+      "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+      "/Applications/Arc.app/Contents/MacOS/Arc",
+    ];
+    for (const p of macPaths) {
+      if (fs.existsSync(p)) return p;
+    }
   }
 
   if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA || "";
+    const programFiles = process.env.PROGRAMFILES || "C:\\Program Files";
+    const programFilesX86 = process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)";
     const winPaths = [
-      path.join(process.env.PROGRAMFILES || "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe"),
-      path.join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Google", "Chrome", "Application", "chrome.exe"),
-      path.join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "Application", "chrome.exe"),
+      path.join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+      path.join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+      path.join(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
+      path.join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+      path.join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe"),
+      path.join(localAppData, "Microsoft", "Edge", "Application", "msedge.exe"),
+      path.join(programFiles, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+      path.join(localAppData, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+      path.join(localAppData, "Chromium", "Application", "chrome.exe"),
     ];
     for (const p of winPaths) {
+      if (fs.existsSync(p)) return p;
+    }
+  }
+
+  if (process.platform === "linux") {
+    const linuxPaths = [
+      "/opt/google/chrome/google-chrome",
+      "/opt/microsoft/msedge/msedge",
+      "/usr/bin/chromium-browser",
+      "/usr/bin/chromium",
+      "/snap/bin/chromium",
+      "/usr/bin/brave-browser",
+    ];
+    for (const p of linuxPaths) {
       if (fs.existsSync(p)) return p;
     }
   }
@@ -155,10 +188,10 @@ function launchChrome(config, port) {
   const chromePath = findChrome();
   if (!chromePath) {
     const searchedPaths = process.platform === "darwin"
-      ? "/Applications/Google Chrome.app, google-chrome, chromium (via PATH)"
+      ? "Google Chrome, Microsoft Edge, Chromium, Brave, Arc in /Applications and PATH"
       : process.platform === "win32"
-        ? "Program Files, LocalAppData, chrome.exe / google-chrome.exe (via PATH)"
-        : "google-chrome, google-chrome-stable, chromium-browser, chromium (via PATH)";
+        ? "Chrome, Edge, Brave, Chromium in Program Files, LocalAppData, and PATH"
+        : "google-chrome, chromium, microsoft-edge, brave-browser via PATH and /opt";
     throw new Error(
       `Chrome/Chromium not found. Searched: ${searchedPaths}. ` +
       `Fix: (1) Install Google Chrome, (2) add it to PATH, or ` +
