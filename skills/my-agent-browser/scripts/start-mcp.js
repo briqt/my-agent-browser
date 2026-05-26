@@ -344,9 +344,22 @@ const CHROME_DEAD_PATTERNS = [
   "ECONNREFUSED",
 ];
 
+// Errors indicating the MCP process has stale internal state (e.g. selectedPage
+// references a closed tab) but Chrome itself is fine. Recovery: restart the MCP
+// child so it reconnects and rebuilds its context.
+const MCP_STALE_STATE_PATTERNS = [
+  "The selected page has been closed",
+  "No page selected",
+];
+
 function isChromeDeadError(text) {
   if (!text) return false;
   return CHROME_DEAD_PATTERNS.some((p) => text.includes(p));
+}
+
+function isMcpStaleStateError(text) {
+  if (!text) return false;
+  return MCP_STALE_STATE_PATTERNS.some((p) => text.includes(p));
 }
 
 function responseHasChromeError(line) {
@@ -362,11 +375,24 @@ function responseHasChromeError(line) {
   return false;
 }
 
+function responseHasStaleStateError(line) {
+  try {
+    const msg = JSON.parse(line);
+    if (msg.error && msg.error.message && isMcpStaleStateError(msg.error.message)) return true;
+    if (msg.result && Array.isArray(msg.result.content)) {
+      for (const item of msg.result.content) {
+        if (item.type === "text" && isMcpStaleStateError(item.text)) return true;
+      }
+    }
+  } catch {}
+  return false;
+}
+
 // --- Lazy start: stdin proxy with on-demand Chrome launch ---
 
 function startLazy(config, port) {
   const mcpArgs = buildMcpArgs(config, port);
-  const child = startMcp(mcpArgs, { pipe: true });
+  let child = startMcp(mcpArgs, { pipe: true });
 
   let state = "pending"; // "pending" → "launching" → "ready" | "failed"
   let buffer = [];
@@ -437,6 +463,79 @@ function startLazy(config, port) {
     relaunching = false;
   }
 
+  // Restart the MCP child process when it has stale internal state.
+  // Chrome is fine — only the MCP process needs to reconnect and rebuild context.
+  let restarting = false;
+  function restartMcpChild() {
+    if (restarting) return;
+    restarting = true;
+    process.stderr.write(`[my-agent-browser] MCP process has stale state, restarting...\n`);
+
+    // Kill the old child
+    try { child.kill("SIGTERM"); } catch {}
+
+    // Spawn a new MCP child with the same args
+    const newChild = startMcp(mcpArgs, { pipe: true });
+
+    // Re-wire stdout proxy on the new child
+    let newStdoutPartial = "";
+    newChild.stdout.on("data", (chunk) => {
+      newStdoutPartial += chunk.toString();
+      const lines = newStdoutPartial.split("\n");
+      newStdoutPartial = lines.pop();
+      for (const line of lines) {
+        if (responseHasChromeError(line)) {
+          relaunchChrome();
+          try {
+            const msg = JSON.parse(line);
+            const rewritten = {
+              ...msg,
+              result: {
+                content: [{ type: "text", text: "Chrome was closed or crashed. All open pages and browser state are lost. Chrome is being relaunched automatically — please navigate to your target URL again." }],
+                isError: true,
+              },
+            };
+            if (msg.error) delete rewritten.error;
+            process.stdout.write(JSON.stringify(rewritten) + "\n");
+          } catch {
+            process.stdout.write(line + "\n");
+          }
+          continue;
+        }
+        if (responseHasStaleStateError(line)) {
+          // Avoid infinite restart loops — just pass through on second occurrence
+          process.stderr.write(`[my-agent-browser] stale state error persists after restart, passing through\n`);
+          process.stdout.write(line + "\n");
+          continue;
+        }
+        process.stdout.write(line + "\n");
+      }
+    });
+    newChild.stdout.on("end", () => {
+      if (newStdoutPartial) { process.stdout.write(newStdoutPartial); newStdoutPartial = ""; }
+    });
+
+    // Re-pipe stdin to new child
+    process.stdin.unpipe(child.stdin);
+    process.stdin.pipe(newChild.stdin);
+
+    // Update the child reference and event handlers
+    newChild.on("error", (err) => {
+      process.stderr.write(`[my-agent-browser] spawn error: ${err.message}\n`);
+      cleanup();
+      process.exit(1);
+    });
+    newChild.on("exit", (code) => {
+      cleanup();
+      process.exit(code ?? 1);
+    });
+
+    // Replace the outer child reference (used by cleanup and event handlers)
+    child = newChild;
+    restarting = false;
+    process.stderr.write(`[my-agent-browser] MCP process restarted successfully\n`);
+  }
+
   process.stdin.on("data", (chunk) => {
     if (state === "ready") return;
 
@@ -500,6 +599,27 @@ function startLazy(config, port) {
             ...msg,
             result: {
               content: [{ type: "text", text: "Chrome was closed or crashed. All open pages and browser state are lost. Chrome is being relaunched automatically — please navigate to your target URL again." }],
+              isError: true,
+            },
+          };
+          if (msg.error) {
+            delete rewritten.error;
+          }
+          process.stdout.write(JSON.stringify(rewritten) + "\n");
+        } catch {
+          process.stdout.write(line + "\n");
+        }
+        continue;
+      }
+      if (state === "ready" && responseHasStaleStateError(line)) {
+        restartMcpChild();
+        // Rewrite the error to tell the agent to retry
+        try {
+          const msg = JSON.parse(line);
+          const rewritten = {
+            ...msg,
+            result: {
+              content: [{ type: "text", text: "The browser session had stale state and has been automatically recovered. Please retry your last action." }],
               isError: true,
             },
           };
