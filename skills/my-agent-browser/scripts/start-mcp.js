@@ -71,6 +71,18 @@ function deleteLock() {
   try { fs.unlinkSync(lockFile); } catch {}
 }
 
+function pruneDeadClients(lock) {
+  if (!lock.clientPids) return lock;
+  const before = lock.clientPids.length;
+  lock.clientPids = lock.clientPids.filter(pid => pid === process.pid || isProcessAlive(pid));
+  lock.clients = lock.clientPids.length;
+  const pruned = before - lock.clientPids.length;
+  if (pruned > 0) {
+    process.stderr.write(`[my-agent-browser] pruned ${pruned} dead client(s) from lock\n`);
+  }
+  return lock;
+}
+
 function isProcessAlive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
@@ -280,7 +292,12 @@ function cleanup() {
   const lock = readLock();
   if (!lock) return;
 
-  lock.clients = Math.max(0, (lock.clients || 1) - 1);
+  if (lock.clientPids) {
+    lock.clientPids = lock.clientPids.filter(p => p !== process.pid);
+    lock.clients = lock.clientPids.length;
+  } else {
+    lock.clients = Math.max(0, (lock.clients || 1) - 1);
+  }
 
   if (lock.clients > 0) {
     writeLock(lock);
@@ -296,7 +313,10 @@ async function ensureChrome(config, port) {
   let lock = readLock();
 
   if (lock && isProcessAlive(lock.pid) && await probePort(lock.port || port)) {
-    lock.clients = (lock.clients || 0) + 1;
+    if (!lock.clientPids) lock.clientPids = [];
+    lock = pruneDeadClients(lock);
+    if (!lock.clientPids.includes(process.pid)) lock.clientPids.push(process.pid);
+    lock.clients = lock.clientPids.length;
     writeLock(lock);
     process.stderr.write(`[my-agent-browser] reusing Chrome (PID ${lock.pid}, port ${lock.port || port}), clients: ${lock.clients}\n`);
     return;
@@ -304,7 +324,9 @@ async function ensureChrome(config, port) {
 
   if (await probePort(port)) {
     process.stderr.write(`[my-agent-browser] Chrome already listening on port ${port}, reusing\n`);
-    writeLock({ port, pid: lock ? lock.pid : 0, clients: (lock ? lock.clients || 0 : 0) + 1 });
+    const clientPids = lock && lock.clientPids ? lock.clientPids.filter(p => isProcessAlive(p)) : [];
+    if (!clientPids.includes(process.pid)) clientPids.push(process.pid);
+    writeLock({ port, pid: lock ? lock.pid : 0, clients: clientPids.length, clientPids });
     return;
   }
 
@@ -327,7 +349,7 @@ async function ensureChrome(config, port) {
     throw new Error(`Chrome failed to start (port ${port} not reachable)`);
   }
 
-  writeLock({ port, pid, clients: 1 });
+  writeLock({ port, pid, clients: 1, clientPids: [process.pid] });
 }
 
 // --- Chrome connection error patterns ---
@@ -581,6 +603,9 @@ function startLazy(config, port) {
 
   process.stdin.on("end", () => {
     if (child.stdin.writable) child.stdin.end();
+    process.stderr.write(`[my-agent-browser] stdin closed (parent gone), exiting.\n`);
+    cleanup();
+    setTimeout(() => process.exit(0), 500);
   });
 
   // stdout proxy: relay lines, detect Chrome errors, trigger relaunch
@@ -642,6 +667,53 @@ function startLazy(config, port) {
   return child;
 }
 
+// --- Parent heartbeat (detect orphaned state) ---
+
+function setupParentHeartbeat(intervalMs = 5000) {
+  const originalPpid = process.ppid;
+  if (!originalPpid || originalPpid === 1) return;
+
+  const timer = setInterval(() => {
+    const parentGone = process.platform === "win32"
+      ? !isProcessAlive(originalPpid)
+      : (process.ppid === 1 || process.ppid !== originalPpid);
+
+    if (parentGone) {
+      process.stderr.write(`[my-agent-browser] parent (PID ${originalPpid}) gone, exiting.\n`);
+      clearInterval(timer);
+      cleanup();
+      process.exit(0);
+    }
+  }, intervalMs);
+
+  timer.unref();
+}
+
+// --- Startup orphan cleanup (Unix only) ---
+
+function cleanupOrphanProcesses(port) {
+  if (process.platform === "win32") return;
+  try {
+    const result = execFileSync("ps", ["-eo", "pid,ppid,args"], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const targetPattern = `--browserUrl=http://127.0.0.1:${port}`;
+    for (const line of result.split("\n")) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 3) continue;
+      const pid = parseInt(parts[0], 10);
+      const ppid = parseInt(parts[1], 10);
+      const cmd = parts.slice(2).join(" ");
+      if (ppid === 1 && cmd.includes("chrome-devtools-mcp") && cmd.includes(targetPattern)) {
+        if (pid === process.pid) continue;
+        process.stderr.write(`[my-agent-browser] killing orphan chrome-devtools-mcp (PID ${pid})\n`);
+        try { process.kill(pid, "SIGTERM"); } catch {}
+      }
+    }
+  } catch {}
+}
+
 // --- Main ---
 
 async function main() {
@@ -671,6 +743,12 @@ async function main() {
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
     process.on(sig, () => { cleanup(); process.exit(0); });
   }
+
+  // Orphan cleanup on startup
+  cleanupOrphanProcesses(port);
+
+  // Parent heartbeat — exit if parent dies
+  setupParentHeartbeat(5000);
 
   let child;
 
