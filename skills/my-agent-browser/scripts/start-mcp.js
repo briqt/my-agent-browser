@@ -270,16 +270,31 @@ function buildMcpArgs(config, port) {
   return args;
 }
 
+function buildNoProxyEnv() {
+  // Node.js undici (globalThis.fetch) does NOT support shell wildcards (127.*)
+  // or CIDR (127.0.0.0/8) in NO_PROXY. It only matches exact hostnames/IPs or
+  // suffix patterns (.example.com). Ensure 127.0.0.1 and localhost are always
+  // present so the MCP↔Chrome CDP connection bypasses any configured proxy.
+  const loopback = ["127.0.0.1", "localhost"];
+  const existing = process.env.no_proxy || process.env.NO_PROXY || "";
+  const entries = existing ? existing.split(",").map(s => s.trim()) : [];
+  for (const addr of loopback) {
+    if (!entries.includes(addr)) entries.push(addr);
+  }
+  const merged = entries.join(",");
+  return { ...process.env, no_proxy: merged, NO_PROXY: merged };
+}
+
 function startMcp(args, { pipe = false } = {}) {
   const stdio = pipe ? ["pipe", "pipe", "inherit"] : "inherit";
+  const env = buildNoProxyEnv();
   const bin = findMcpBin();
   if (bin) {
-    // If we resolved to a .js file, run it with node
-    if (bin.endsWith(".js")) return spawn(process.execPath, [bin, ...args], { stdio });
-    return spawn(bin, args, { stdio });
+    if (bin.endsWith(".js")) return spawn(process.execPath, [bin, ...args], { stdio, env });
+    return spawn(bin, args, { stdio, env });
   }
   const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-  return spawn(npx, ["-y", "chrome-devtools-mcp@^0.25.0", ...args], { stdio });
+  return spawn(npx, ["-y", "chrome-devtools-mcp@^0.25.0", ...args], { stdio, env });
 }
 
 // --- Cleanup on exit ---
