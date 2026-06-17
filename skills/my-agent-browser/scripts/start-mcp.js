@@ -233,9 +233,43 @@ function launchChrome(config, port) {
     try { fs.unlinkSync(path.join(userDataDir, lockName)); } catch {}
   }
 
-  const child = spawn(chromePath, args, { detached: true, stdio: "ignore" });
+  const env = buildChromeEnv(b);
+  const child = spawn(chromePath, args, { detached: true, stdio: "ignore", env });
   child.unref();
   return child.pid;
+}
+
+function buildChromeEnv(browserConfig) {
+  const env = { ...process.env };
+
+  // On Linux without DISPLAY, Chrome cannot open a GUI window and may fail or
+  // run invisibly. Detect common display servers and set DISPLAY/WAYLAND_DISPLAY
+  // so Chrome can render when a display is available.
+  // - Skip on macOS/Windows (they don't use DISPLAY).
+  // - Never override an already-set variable (respect explicit user config).
+  // - If no display server is detected, leave env unchanged (Chrome will run
+  //   headless-like without crashing thanks to --disable-gpu in extraArgs).
+  if (process.platform !== "linux") return env;
+
+  if (!env.DISPLAY) {
+    // WSL2 with WSLg always exposes /tmp/.X11-unix/X0
+    if (fs.existsSync("/tmp/.X11-unix/X0")) {
+      env.DISPLAY = ":0";
+    }
+    // Fallback: explicit config value
+    else if (browserConfig.display) {
+      env.DISPLAY = browserConfig.display;
+    }
+  }
+
+  if (!env.WAYLAND_DISPLAY) {
+    // WSLg also provides a Wayland socket
+    if (fs.existsSync("/run/user/" + (process.getuid?.() || 1000) + "/wayland-0")) {
+      env.WAYLAND_DISPLAY = "wayland-0";
+    }
+  }
+
+  return env;
 }
 
 // --- MCP server launcher ---
