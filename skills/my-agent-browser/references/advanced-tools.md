@@ -16,6 +16,10 @@ This guide covers the advanced tool categories that require explicit flags in
 | `performance_stop_trace` | Stop recording and return trace results |
 | `performance_analyze_insight { id, type }` | Deep-dive into a specific insight from the trace |
 | `take_memory_snapshot { filePath }` | Capture a V8 heap snapshot to disk |
+| `close_heapsnapshot { filePath }` | Release a previously loaded heap snapshot from memory |
+| `get_heapsnapshot_dominators { filePath }` | Get dominator tree nodes (find what retains the most memory) |
+| `get_heapsnapshot_edges { filePath, nodeId }` | Get edges from a specific node in the heap graph |
+| `get_retaining_paths { filePath, nodeId }` | Find retaining paths to a node (debug why it's not GC'd) |
 
 ### Workflow: Profile a Page Load
 
@@ -54,6 +58,22 @@ Use `take_memory_snapshot` to capture heap state for memory leak investigation:
 ```
 
 The `.heapsnapshot` files can be loaded in Chrome DevTools Memory panel for comparison.
+
+### Memory Debugging (v1.2+)
+
+Analyze heap snapshots programmatically without leaving the agent:
+
+```
+1. take_memory_snapshot { filePath: "/tmp/snapshot.heapsnapshot" }
+2. get_heapsnapshot_dominators { filePath: "/tmp/snapshot.heapsnapshot" }
+   → Returns: top nodes by retained size (find what's holding the most memory)
+3. get_heapsnapshot_edges { filePath: "/tmp/snapshot.heapsnapshot", nodeId: "12345" }
+   → Returns: outgoing references from a node
+4. get_retaining_paths { filePath: "/tmp/snapshot.heapsnapshot", nodeId: "12345" }
+   → Returns: paths from GC roots to this node (why it's not garbage collected)
+5. close_heapsnapshot { filePath: "/tmp/snapshot.heapsnapshot" }
+   → Releases memory used by the loaded snapshot
+```
 
 ## Lighthouse
 

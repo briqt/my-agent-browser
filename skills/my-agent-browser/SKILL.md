@@ -20,7 +20,7 @@ Browser automation for AI agents via `chrome-devtools-mcp` MCP server.
 
 If browser MCP tools (`navigate_page`, `take_snapshot`, `click`, `fill`) are not available in your tool list:
 
-1. Install: `npm install -g chrome-devtools-mcp@^0.25.0`
+1. Install: `npm install -g chrome-devtools-mcp@^1.3.0`
 2. Create config:
    ```bash
    mkdir -p ~/.config/agent-skills/my-agent-browser
@@ -89,11 +89,11 @@ Each `uid=X_Y` is the identifier you pass to `click`, `fill`, `hover`, etc.
 
 Enabled via `mcp.flags` in `~/.config/agent-skills/my-agent-browser/config.json`. See [references/advanced-tools.md](references/advanced-tools.md) for detailed workflows.
 
-- **Performance** (`--categoryPerformance`): trace recording, heap snapshots, insight analysis
+- **Performance** (`--categoryPerformance`): trace recording, heap snapshots, memory debugging (dominators, retaining paths, edges)
 - **Network** (`--categoryNetwork`): list/inspect network requests and responses
 - **Lighthouse** (`--categoryLighthouse`): run audits (navigation/snapshot, desktop/mobile)
 - **Console** (`--categoryConsole`): list/inspect browser console messages
-- **Emulation** (`--categoryEmulation`): throttle network/CPU, set geolocation, color scheme
+- **Emulation** (`--categoryEmulation`): throttle network/CPU, set geolocation, color scheme, extra HTTP headers
 
 ## Key Rules
 

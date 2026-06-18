@@ -29,7 +29,7 @@ This installs the skill (SKILL.md, scripts, references) to `<skill-dir>`.
 ### Step 2: Install the runtime dependency
 
 ```bash
-npm install -g chrome-devtools-mcp@^0.25.0
+npm install -g chrome-devtools-mcp@^1.3.0
 ```
 
 ### Step 3: Create your personal config
@@ -226,12 +226,12 @@ Available categories:
 
 | Flag | Tools unlocked |
 |------|---------------|
-| `--categoryPerformance` | `performance_start_trace`, `performance_stop_trace`, `performance_analyze_insight`, `take_memory_snapshot` |
+| `--categoryPerformance` | `performance_start_trace`, `performance_stop_trace`, `performance_analyze_insight`, `take_memory_snapshot`, `close_heapsnapshot`, `get_heapsnapshot_dominators`, `get_heapsnapshot_edges`, `get_retaining_paths` |
 | `--categoryNetwork` | `list_network_requests`, `get_network_request` |
 | `--categoryLighthouse` | `lighthouse_audit` (navigation and snapshot modes) |
 | `--categoryConsole` | `list_console_messages`, `get_console_message` |
-| `--categoryEmulation` | `emulate` (network conditions, CPU throttling, geolocation, color scheme, user agent) |
-| `--categoryExtensions` | `list_extensions`, `install_extension`, `uninstall_extension`, `reload_extension` |
+| `--categoryEmulation` | `emulate` (network conditions, CPU throttling, geolocation, color scheme, user agent, extra HTTP headers) |
+| `--categoryExtensions` | `list_extensions`, `install_extension`, `uninstall_extension`, `reload_extension` (includes extension service worker logs) |
 
 You can enable all categories at once or pick only what you need. More categories = more tools exposed to the agent = slightly longer tool list in context.
 

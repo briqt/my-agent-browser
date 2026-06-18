@@ -328,7 +328,7 @@ function startMcp(args, { pipe = false } = {}) {
     return spawn(bin, args, { stdio, env });
   }
   const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-  return spawn(npx, ["-y", "chrome-devtools-mcp@^0.25.0", ...args], { stdio, env });
+  return spawn(npx, ["-y", "chrome-devtools-mcp@^1.3.0", ...args], { stdio, env });
 }
 
 // --- Cleanup on exit ---

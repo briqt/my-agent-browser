@@ -1,6 +1,6 @@
 # my-agent-browser
 
-Browser automation for AI agents, powered by [chrome-devtools-mcp](https://github.com/anthropics/chrome-devtools-mcp).
+Browser automation for AI agents, powered by [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp).
 
 ## What is this?
 
@@ -10,7 +10,7 @@ A thin config-driven wrapper that gives AI agents native MCP tool calls for brow
 
 ```bash
 npx skills add briqt/my-agent-browser -g
-npm install -g chrome-devtools-mcp@^0.25.0
+npm install -g chrome-devtools-mcp@^1.3.0
 mkdir -p ~/.config/agent-skills/my-agent-browser
 cp <skill-dir>/config.example.json ~/.config/agent-skills/my-agent-browser/config.json
 ```
@@ -75,5 +75,5 @@ Chrome (shared across sessions)
 
 ```bash
 npx skills update my-agent-browser -g
-npm install -g chrome-devtools-mcp@^0.25.0
+npm install -g chrome-devtools-mcp@^1.3.0
 ```
