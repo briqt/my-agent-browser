@@ -100,6 +100,7 @@ Enabled via `mcp.flags` in `~/.config/agent-skills/my-agent-browser/config.json`
 - **UIDs are ephemeral** — They come from the current DOM. After any navigation or interaction that changes the page, previous UIDs are invalid. Always `take_snapshot` again.
 - **Use `fill` for inputs** — It targets a specific element and clears first. `type_text` types at whatever is focused, which is fragile.
 - **One action, then re-read** — Don't batch multiple actions without re-snapshotting. The first action may invalidate subsequent UIDs.
+- **Heavy pages: use file-based snapshots** — Pages with many DOM nodes (rich-text editors after content injection, large tables, long lists) will crash the browser if you use `includeSnapshot: true` or `wait_for`. Instead: use `take_snapshot { filePath: "/tmp/snap.txt" }` and read the file with `tail`. Always set `includeSnapshot: false` on click/fill actions for heavy pages. See [references/troubleshooting.md](references/troubleshooting.md) for details.
 
 ## Example: Login Flow
 
