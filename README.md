@@ -41,7 +41,7 @@ Production-ready wrapper around [chrome-devtools-mcp](https://github.com/ChromeD
 ## Install
 
 ```bash
-npx skills add briqt/my-agent-browser -g
+npx skills add briqt/my-agent-browser -g -y
 npm install -g chrome-devtools-mcp@^1.3.0
 mkdir -p ~/.config/agent-skills/my-agent-browser
 cp ~/.agents/skills/my-agent-browser/config.example.json ~/.config/agent-skills/my-agent-browser/config.json
@@ -142,7 +142,7 @@ The bundled SKILL.md provides workflow guidance so agents avoid common pitfalls:
 ## Updating
 
 ```bash
-npx skills update my-agent-browser -g
+npx skills update my-agent-browser -g -y
 npm install -g chrome-devtools-mcp@^1.3.0
 ```
 
