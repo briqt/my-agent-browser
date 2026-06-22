@@ -188,3 +188,7 @@ Option C: connect to existing session — set `browserUrl` in config.
 For detailed troubleshooting: [references/troubleshooting.md](references/troubleshooting.md)
 For network debugging workflows: [references/network-debugging.md](references/network-debugging.md)
 For advanced scraping patterns: [references/scraping-patterns.md](references/scraping-patterns.md)
+
+## Domain-Specific Workflows
+
+- **Academic paper download** (CNKI, Google Scholar, MDPI): [references/domain/academic-paper-download.md](references/domain/academic-paper-download.md)
