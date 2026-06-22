@@ -2,20 +2,41 @@
 
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)]()
 
-Browser automation skill for AI agents, powered by [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp).
-
-Give your AI agent full browser control — navigate pages, fill forms, click buttons, scrape data, run Lighthouse audits — via native MCP tool calls. One command to install, zero custom runtime code.
+Production-ready wrapper around [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp). chrome-devtools-mcp provides the browser MCP tools, but leaves Chrome process management, multi-session sharing, and fault recovery entirely to you. This project adds the operational layer so AI agents can use the browser reliably.
 
 **[中文文档](README_CN.md)**
 
-## Features
+## What this adds over bare chrome-devtools-mcp
 
-- **Native MCP browser tools** — `navigate_page`, `take_snapshot`, `click`, `fill`, `evaluate_script`, and 20+ more
-- **Chrome lifecycle management** — shared instance across sessions, reference counting, auto-cleanup
-- **Built-in SKILL.md** — teaches agents correct usage patterns (heavy page handling, error recovery, multi-tab)
-- **One-line install** — works with Claude Code, Codex, Cursor, Kiro, and any MCP-capable agent
-- **Crash recovery** — CDP port probing before concluding Chrome is dead, auto-relaunch when needed
-- **Cross-platform** — macOS, Linux, Windows
+### Chrome Lifecycle Management
+
+- Auto-find Chrome on your system (macOS/Linux/Windows, searches 10+ paths including Edge/Brave/Arc/Chromium)
+- Lazy start — Chrome only launches on first `tools/call`, not at agent startup
+- Multiple agent sessions share one Chrome instance via `browser.lock` reference counting
+- Last session to exit automatically closes Chrome
+- No orphans after agent crash: parent heartbeat detection + startup orphan process cleanup
+- WSL / headless Linux: auto-detect and configure DISPLAY (WSLg, Wayland, X11)
+
+### Fault Recovery
+
+- Chrome crash detection via CDP port probe — never trusts error text alone
+- Confirmed crash → auto-relaunch Chrome, rewrite MCP response to tell agent to re-navigate
+- MCP stale state (referencing closed tab) → restart only the MCP child process, Chrome stays
+- Profile lock leftover (SingletonLock after hard kill) → auto-clean before launch
+
+### Config-driven + Anti-detection
+
+- Headless mode, proxy, viewport size, custom launch args — all Chrome startup flags configurable
+- Pass any Chrome flags via `extraArgs` to reduce automation detection risk (e.g. `--disable-blink-features=AutomationControlled`)
+- Direct connection to existing Chrome (`browserUrl` mode, for pre-authenticated long-lived sessions)
+
+### Agent Workflow Guidance (SKILL.md)
+
+- Heavy pages: file-based snapshots to prevent DOM overflow crashes
+- Error recovery: stale UIDs, timeouts, Chrome restart — correct response for each
+- Multi-tab: open/extract/close pattern, UID isolation between tabs
+- Scraping: URL-based pagination, lazy-load triggering, JS extraction
+- Login flows: persistent profile, automated credentials, connect to existing session
 
 ## Install
 
@@ -127,4 +148,4 @@ npm install -g chrome-devtools-mcp@^1.3.0
 
 ## Community
 
-Shared on [LINUX DO](https://linux.do/)
+Shared on [LINUX DO](https://linux.do/t/topic/2451355)

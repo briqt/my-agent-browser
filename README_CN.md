@@ -2,20 +2,41 @@
 
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)]()
 
-AI Agent 浏览器自动化 skill，基于 [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp)。
-
-让你的 AI Agent 原生控制浏览器——导航页面、填写表单、点击按钮、抓取数据、运行 Lighthouse 审计——通过 MCP 工具调用。一键安装，零自定义运行时代码。
+[chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) 的生产级包装。chrome-devtools-mcp 提供了浏览器 MCP 工具，但 Chrome 进程管理、多 session 共享、故障恢复全部留给用户自己处理。本项目补上这些运维层，让 AI Agent 真正可靠地使用浏览器。
 
 **[English](README.md)**
 
-## 特性
+## 相对于直接用 chrome-devtools-mcp，本项目多了什么
 
-- **原生 MCP 浏览器工具** — `navigate_page`、`take_snapshot`、`click`、`fill`、`evaluate_script` 等 20+ 工具
-- **Chrome 生命周期管理** — 多 session 共享实例、引用计数、自动清理
-- **内置 SKILL.md** — 教 Agent 正确的使用模式（重页面处理、错误恢复、多 tab 管理）
-- **一键安装** — 支持 Claude Code、Codex、Cursor、Kiro 及任何 MCP Agent
-- **崩溃恢复** — 先探测 CDP 端口确认 Chrome 状态，避免误报崩溃
-- **跨平台** — macOS、Linux、Windows
+### Chrome 生命周期管理
+
+- 自动查找 Chrome（macOS/Linux/Windows 各搜索 10+ 路径，含 Edge/Brave/Arc/Chromium）
+- Lazy start — Chrome 在第一次 `tools/call` 时才启动，不在 Agent 启动时浪费资源
+- 多 Agent session 共享同一 Chrome 实例，通过 `browser.lock` 引用计数
+- 最后一个 session 退出时自动关闭 Chrome
+- Agent 崩溃后不留孤儿：父进程心跳检测 + 启动时清理残留进程
+- WSL/无头 Linux 自动检测并配置 DISPLAY（WSLg、Wayland、X11）
+
+### 故障自愈
+
+- Chrome 崩溃检测通过 CDP 端口探测——不盲信错误文本
+- 确认崩溃后自动重启 Chrome，重写 MCP 响应告知 Agent 重新导航
+- MCP 进程状态过期（如引用了已关闭的 tab）时，只重启 MCP 子进程，Chrome 保持
+- Profile 锁残留（强杀后 SingletonLock）自动清理，不阻塞下次启动
+
+### 配置驱动 + 反爬支持
+
+- headless 模式、proxy 代理、viewport 尺寸、自定义启动参数——所有 Chrome 启动参数均可配置
+- 通过 `extraArgs` 传入任意 Chrome flags，可用于降低自动化检测风险（如 `--disable-blink-features=AutomationControlled`）
+- 直连已有 Chrome 实例（`browserUrl` 模式，适合已登录的长期会话）
+
+### Agent 使用指导（SKILL.md）
+
+- 重页面：文件快照避免 DOM 溢出崩溃
+- 错误恢复：UID 过期、超时、Chrome 重启后的正确应对
+- 多 tab 管理：打开/提取/关闭模式，tab 间 UID 隔离
+- 抓取模式：URL 分页、懒加载触发、JS 提取
+- 登录流程：持久 profile、自动填充、连接已有会话
 
 ## 安装
 
@@ -106,4 +127,4 @@ npm install -g chrome-devtools-mcp@^1.3.0
 
 ## 社区
 
-分享于 [LINUX DO](https://linux.do/)
+分享于 [LINUX DO](https://linux.do/t/topic/2451355)
