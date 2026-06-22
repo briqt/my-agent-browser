@@ -77,3 +77,7 @@ Chrome (shared across sessions)
 npx skills update my-agent-browser -g
 npm install -g chrome-devtools-mcp@^1.3.0
 ```
+
+## Community
+
+Shared on [LINUX DO](https://linux.do/)
