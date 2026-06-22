@@ -402,17 +402,16 @@ async function ensureChrome(config, port) {
 }
 
 // --- Chrome connection error patterns ---
-const CHROME_DEAD_PATTERNS = [
+// These patterns SUGGEST Chrome might be dead. We never trust them alone —
+// always probe the port before concluding Chrome crashed.
+const CHROME_ERROR_PATTERNS = [
   "Could not connect to Chrome",
   "Failed to fetch browser webSocket URL",
-  "Target closed",
-  "Session closed",
   "WebSocket is not open",
   "Connection refused",
-  "Timed out",
-  "timed out",
-  "ETIMEDOUT",
   "ECONNREFUSED",
+  "Target closed",
+  "Session closed",
 ];
 
 // Errors indicating the MCP process has stale internal state (e.g. selectedPage
@@ -423,9 +422,9 @@ const MCP_STALE_STATE_PATTERNS = [
   "No page selected",
 ];
 
-function isChromeDeadError(text) {
+function isChromeError(text) {
   if (!text) return false;
-  return CHROME_DEAD_PATTERNS.some((p) => text.includes(p));
+  return CHROME_ERROR_PATTERNS.some((p) => text.includes(p));
 }
 
 function isMcpStaleStateError(text) {
@@ -436,12 +435,14 @@ function isMcpStaleStateError(text) {
 function responseHasChromeError(line) {
   try {
     const msg = JSON.parse(line);
-    if (msg.error && msg.error.message && isChromeDeadError(msg.error.message)) return true;
+    const texts = [];
+    if (msg.error && msg.error.message) texts.push(msg.error.message);
     if (msg.result && Array.isArray(msg.result.content)) {
       for (const item of msg.result.content) {
-        if (item.type === "text" && isChromeDeadError(item.text)) return true;
+        if (item.type === "text") texts.push(item.text);
       }
     }
+    return isChromeError(texts.join(" "));
   } catch {}
   return false;
 }
@@ -519,6 +520,23 @@ function startLazy(config, port) {
     flushAndPipe();
   }
 
+  function rewriteAsCrash(line) {
+    try {
+      const msg = JSON.parse(line);
+      const rewritten = {
+        ...msg,
+        result: {
+          content: [{ type: "text", text: "Chrome was closed or crashed. All open pages and browser state are lost. Chrome is being relaunched automatically — please navigate to your target URL again." }],
+          isError: true,
+        },
+      };
+      if (msg.error) delete rewritten.error;
+      process.stdout.write(JSON.stringify(rewritten) + "\n");
+    } catch {
+      process.stdout.write(line + "\n");
+    }
+  }
+
   // Silently relaunch Chrome when a connection error is detected
   async function relaunchChrome() {
     if (relaunching) return;
@@ -556,25 +574,17 @@ function startLazy(config, port) {
       newStdoutPartial = lines.pop();
       for (const line of lines) {
         if (responseHasChromeError(line)) {
-          relaunchChrome();
-          try {
-            const msg = JSON.parse(line);
-            const rewritten = {
-              ...msg,
-              result: {
-                content: [{ type: "text", text: "Chrome was closed or crashed. All open pages and browser state are lost. Chrome is being relaunched automatically — please navigate to your target URL again." }],
-                isError: true,
-              },
-            };
-            if (msg.error) delete rewritten.error;
-            process.stdout.write(JSON.stringify(rewritten) + "\n");
-          } catch {
-            process.stdout.write(line + "\n");
-          }
+          probePort(port, 1500).then((alive) => {
+            if (!alive) {
+              relaunchChrome();
+              rewriteAsCrash(line);
+            } else {
+              process.stdout.write(line + "\n");
+            }
+          });
           continue;
         }
         if (responseHasStaleStateError(line)) {
-          // Avoid infinite restart loops — just pass through on second occurrence
           process.stderr.write(`[my-agent-browser] stale state error persists after restart, passing through\n`);
           process.stdout.write(line + "\n");
           continue;
@@ -657,7 +667,7 @@ function startLazy(config, port) {
     setTimeout(() => process.exit(0), 500);
   });
 
-  // stdout proxy: relay lines, detect Chrome errors, trigger relaunch
+  // stdout proxy: relay lines, detect Chrome process death, auto-recover
   let stdoutPartial = "";
   child.stdout.on("data", (chunk) => {
     stdoutPartial += chunk.toString();
@@ -665,29 +675,20 @@ function startLazy(config, port) {
     stdoutPartial = lines.pop();
     for (const line of lines) {
       if (state === "ready" && responseHasChromeError(line)) {
-        relaunchChrome();
-        // Rewrite the error message to be actionable for the agent
-        try {
-          const msg = JSON.parse(line);
-          const rewritten = {
-            ...msg,
-            result: {
-              content: [{ type: "text", text: "Chrome was closed or crashed. All open pages and browser state are lost. Chrome is being relaunched automatically — please navigate to your target URL again." }],
-              isError: true,
-            },
-          };
-          if (msg.error) {
-            delete rewritten.error;
+        // Only act if Chrome is actually unreachable — don't trust error text alone
+        probePort(port, 1500).then((alive) => {
+          if (!alive) {
+            relaunchChrome();
+            rewriteAsCrash(line);
+          } else {
+            // Chrome is alive — pass the original error through untouched
+            process.stdout.write(line + "\n");
           }
-          process.stdout.write(JSON.stringify(rewritten) + "\n");
-        } catch {
-          process.stdout.write(line + "\n");
-        }
+        });
         continue;
       }
       if (state === "ready" && responseHasStaleStateError(line)) {
         restartMcpChild();
-        // Rewrite the error to tell the agent to retry
         try {
           const msg = JSON.parse(line);
           const rewritten = {
@@ -697,9 +698,7 @@ function startLazy(config, port) {
               isError: true,
             },
           };
-          if (msg.error) {
-            delete rewritten.error;
-          }
+          if (msg.error) delete rewritten.error;
           process.stdout.write(JSON.stringify(rewritten) + "\n");
         } catch {
           process.stdout.write(line + "\n");
