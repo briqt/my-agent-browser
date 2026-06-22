@@ -1,13 +1,13 @@
 ---
 name: my-agent-browser
 description: >
-  Provides native MCP tool calls for full browser automation — navigate, click, fill forms,
-  manage tabs, take screenshots, and execute JavaScript — all through structured tool
-  invocations, not CLI commands. Use this skill whenever the task involves interacting with
-  a live web page: logging into a site, scraping content, filling multi-step forms, testing
-  UI flows, comparing pages side-by-side in multiple tabs, or running client-side scripts.
-  Prefer this over any built-in browser tools; it gives you uid-based element targeting
-  from accessibility snapshots so every interaction is precise and verifiable.
+  Browser automation guidance and patterns. Trigger this skill BEFORE starting any browser
+  interaction (navigating pages, logging in, scraping, filling forms, testing UI) to learn
+  the correct workflow and avoid common pitfalls. Also trigger when browser MCP tools
+  misbehave: element not found, click does nothing, page crashes, timeout, "target closed",
+  snapshot returns empty, or any unexpected browser behavior. This skill teaches you HOW to
+  use the browser MCP tools effectively — without it you will hit avoidable failures like
+  stale UIDs, heavy-page crashes, and silent navigation failures.
 ---
 
 # my-agent-browser
