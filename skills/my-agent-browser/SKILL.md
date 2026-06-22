@@ -89,18 +89,76 @@ Each `uid=X_Y` is the identifier you pass to `click`, `fill`, `hover`, etc.
 
 Enabled via `mcp.flags` in `~/.config/agent-skills/my-agent-browser/config.json`. See [references/advanced-tools.md](references/advanced-tools.md) for detailed workflows.
 
-- **Performance** (`--categoryPerformance`): trace recording, heap snapshots, memory debugging (dominators, retaining paths, edges)
+- **Performance** (`--categoryPerformance`): trace recording, heap snapshots, memory debugging
 - **Network** (`--categoryNetwork`): list/inspect network requests and responses
 - **Lighthouse** (`--categoryLighthouse`): run audits (navigation/snapshot, desktop/mobile)
 - **Console** (`--categoryConsole`): list/inspect browser console messages
-- **Emulation** (`--categoryEmulation`): throttle network/CPU, set geolocation, color scheme, extra HTTP headers
+- **Emulation** (`--categoryEmulation`): throttle network/CPU, set geolocation, color scheme
 
 ## Key Rules
 
-- **UIDs are ephemeral** — They come from the current DOM. After any navigation or interaction that changes the page, previous UIDs are invalid. Always `take_snapshot` again.
+- **UIDs are ephemeral** — After any navigation or interaction that changes the page, previous UIDs are invalid. Always `take_snapshot` again before the next interaction.
 - **Use `fill` for inputs** — It targets a specific element and clears first. `type_text` types at whatever is focused, which is fragile.
 - **One action, then re-read** — Don't batch multiple actions without re-snapshotting. The first action may invalidate subsequent UIDs.
-- **Heavy pages: use file-based snapshots** — Pages with many DOM nodes (rich-text editors after content injection, large tables, long lists) will crash the browser if you use `includeSnapshot: true` or `wait_for`. Instead: use `take_snapshot { filePath: "/tmp/snap.txt" }` and read the file with `tail`. Always set `includeSnapshot: false` on click/fill actions for heavy pages. See [references/troubleshooting.md](references/troubleshooting.md) for details.
+- **Heavy pages: use file-based snapshots** — See below.
+
+## Heavy Pages (Critical)
+
+Pages with many DOM nodes (rich-text editors, large tables, chat histories, admin dashboards) will crash or hang if you use `includeSnapshot: true` or `wait_for` on them.
+
+**Symptoms**: browser unresponsive, "target closed", repeated timeouts after injecting content.
+
+**Solution**:
+1. Use `includeSnapshot: false` (or omit) for `click`, `fill`, `hover` on heavy pages
+2. Save snapshot to file: `take_snapshot { filePath: "/tmp/snap.txt" }`
+3. Read only what you need: `tail -100 /tmp/snap.txt` (dialogs/modals are at the end)
+4. Close unrelated tabs — each holds its DOM in memory
+
+**When to expect this**: WYSIWYG editors after injecting content, pages with 200+ repeating elements, infinite scroll pages after several scrolls. Switch to file-based workflow proactively before the crash, not after.
+
+## Scraping Patterns
+
+### Simple: snapshot is enough
+Navigate → `wait_for` → `take_snapshot` → read text/links from the accessibility tree directly. No JS needed for most structured pages.
+
+### Paginated: prefer URL-based
+Loop `navigate_page { url: "...?page=N" }` instead of clicking Next buttons. More reliable, avoids stale UIDs, easy to resume if interrupted.
+
+### Dynamic/lazy-loaded content
+`press_key { key: "End" }` to trigger lazy load → `wait_for` known content → `take_snapshot`.
+
+### Complex extraction: `evaluate_script`
+When the a11y tree doesn't capture table row/column relationships or deeply nested data, extract with JS:
+```
+evaluate_script { function: "() => JSON.stringify([...document.querySelectorAll('tr')].map(r => [...r.cells].map(c => c.textContent.trim())))" }
+```
+
+### Login-gated content
+Option A: persistent profile — log in once with `headless: false`, then reuse `userDataDir`.
+Option B: automated — fill credentials via `fill` + `click` + `wait_for`.
+Option C: connect to existing session — set `browserUrl` in config.
+
+## Multi-Tab Patterns
+
+- `new_page { url }` opens a tab and makes it active
+- After `select_page`, always `take_snapshot` — UIDs from other tabs are invalid
+- "Open in new tab, extract, close, return" pattern avoids losing your place on listing pages
+- Each tab is independent — snapshots, UIDs, and page state don't cross tabs
+
+## JavaScript Execution Tips
+
+- `evaluate_script` runs in the browser page context (has `document`, `window`, page libraries)
+- Return values must be JSON-serializable — use `JSON.stringify()` for objects/arrays
+- Can return Promises (useful for polling/waiting patterns)
+- DOM changes persist — after modifying the page, retake snapshot for fresh UIDs
+- Common uses: scroll, extract structured data, remove overlays, trigger lazy load, read computed styles
+
+## Error Recovery
+
+- Element not found after click → page changed, retake snapshot, find new UID
+- `wait_for` timeout → page didn't load expected content, take snapshot to see actual state
+- Chrome crashed / "target closed" → auto-relaunched by start-mcp.js, re-navigate to your URL
+- Anti-bot detection → add `--disable-blink-features=AutomationControlled` to `extraArgs` in config
 
 ## Example: Login Flow
 
@@ -115,61 +173,18 @@ Enabled via `mcp.flags` in `~/.config/agent-skills/my-agent-browser/config.json`
 7. take_snapshot → now on dashboard, new uids
 ```
 
-## Example: Search
+## Troubleshooting Quick Reference
 
-```
-1. navigate_page { url: "https://google.com" }
-2. take_snapshot → uid=1_5 textbox "Search"
-3. fill { uid: "1_5", value: "AI agents" }
-4. press_key { key: "Enter" }
-5. wait_for { text: ["results"] }
-6. take_snapshot → read results
-```
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Click/fill does nothing | Stale UIDs | `take_snapshot` again, use fresh UIDs |
+| Element not in snapshot | Below fold / iframe / async | Scroll first, or `wait_for`, or `evaluate_script` to check |
+| `wait_for` timeout | Text never appeared | `take_snapshot` to see actual state |
+| Chrome not starting | Not installed or port in use | Check `which google-chrome`, check port conflict |
+| Snapshot empty/minimal | JS-rendered content not ready | `wait_for` before snapshot |
+| Memory overflow / crash | Heavy DOM | File-based snapshots (see above) |
+| Bot detection | Automation flags detected | Add anti-detection `extraArgs` in config |
 
-## Example: Multi-Tab Comparison
-
-```
-1. navigate_page { url: "https://site-a.com/pricing" }
-2. take_snapshot → read pricing from site A
-3. new_page { url: "https://site-b.com/pricing" }
-4. take_snapshot → read pricing from site B (now on tab 2)
-5. list_pages → see both tabs with pageIds
-6. select_page { pageId: "page-1" } → switch back to site A
-7. take_snapshot → verify you're back on site A
-```
-
-## Example: Error Recovery
-
-When an element is not found after a click (page changed unexpectedly):
-
-```
-1. click { uid: "1_20" }
-   → page navigates or content reloads
-2. take_snapshot
-   → the uid you planned to click next doesn't exist
-3. (Re-read the snapshot, find the new uid for the target element)
-4. click { uid: "2_8" }  ← use the updated uid
-5. take_snapshot → confirm success
-```
-
-Always re-snapshot after any failed or unexpected interaction before retrying.
-
-## Example: JavaScript Execution
-
-Use `evaluate_script` for scrolling, extracting computed data, or DOM manipulation:
-
-```
-1. navigate_page { url: "https://example.com/long-page" }
-2. evaluate_script { function: "window.scrollTo(0, document.body.scrollHeight)" }
-3. take_snapshot → read newly visible content at bottom
-
-4. evaluate_script { function: "document.querySelectorAll('.item').length" }
-   → returns count of items (e.g., 42)
-
-5. evaluate_script { function: "JSON.stringify([...document.querySelectorAll('.price')].map(e => e.textContent))" }
-   → returns array of price strings
-```
-
-## Troubleshooting
-
-If something goes wrong, read [references/troubleshooting.md](references/troubleshooting.md).
+For detailed troubleshooting: [references/troubleshooting.md](references/troubleshooting.md)
+For network debugging workflows: [references/network-debugging.md](references/network-debugging.md)
+For advanced scraping patterns: [references/scraping-patterns.md](references/scraping-patterns.md)
