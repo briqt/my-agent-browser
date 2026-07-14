@@ -1,12 +1,13 @@
 # Advanced Tools
 
-This guide covers the advanced tool categories that require explicit flags in
-`~/.config/agent-skills/my-agent-browser/config.json`. Enable them by adding the corresponding
-`--category*` flag to `mcp.flags`. See [setup.md](setup.md) for configuration details.
+This guide covers the advanced tool groups. **Performance, Network, Lighthouse,
+Console and Emulation are available by default** — no configuration needed. Only
+heap-memory *analysis* is opt-in (`--experimentalMemory` in `mcp.flags`). See
+[setup.md](setup.md) for configuration details.
 
 ## Performance Tools
 
-**Required flag:** `--categoryPerformance`
+**Availability:** on by default — no flag needed.
 
 ### Available Tools
 
@@ -14,12 +15,11 @@ This guide covers the advanced tool categories that require explicit flags in
 |------|---------|
 | `performance_start_trace` | Begin recording a performance trace |
 | `performance_stop_trace` | Stop recording and return trace results |
-| `performance_analyze_insight { id, type }` | Deep-dive into a specific insight from the trace |
-| `take_memory_snapshot { filePath }` | Capture a V8 heap snapshot to disk |
-| `close_heapsnapshot { filePath }` | Release a previously loaded heap snapshot from memory |
-| `get_heapsnapshot_dominators { filePath }` | Get dominator tree nodes (find what retains the most memory) |
-| `get_heapsnapshot_edges { filePath, nodeId }` | Get edges from a specific node in the heap graph |
-| `get_retaining_paths { filePath, nodeId }` | Find retaining paths to a node (debug why it's not GC'd) |
+| `performance_analyze_insight { insightName, insightSetId }` | Deep-dive into a specific insight from the trace |
+| `take_heapsnapshot { filePath }` | Capture a V8 heap snapshot to disk |
+
+Heap-snapshot *analysis* tools (dominators, retaining paths, etc.) are opt-in — see
+[Memory Debugging](#memory-debugging-opt-in) below.
 
 ### Workflow: Profile a Page Load
 
@@ -48,36 +48,45 @@ This guide covers the advanced tool categories that require explicit flags in
 
 ### Memory Snapshots
 
-Use `take_memory_snapshot` to capture heap state for memory leak investigation:
+Use `take_heapsnapshot` to capture heap state for memory leak investigation:
 
 ```
 1. navigate_page { url: "https://app.example.com" }
-2. take_memory_snapshot { filePath: "/tmp/before.heapsnapshot" }
+2. take_heapsnapshot { filePath: "/tmp/before.heapsnapshot" }
 3. click { uid: "1_10" }   — trigger the suspected leak
-4. take_memory_snapshot { filePath: "/tmp/after.heapsnapshot" }
+4. take_heapsnapshot { filePath: "/tmp/after.heapsnapshot" }
 ```
 
 The `.heapsnapshot` files can be loaded in Chrome DevTools Memory panel for comparison.
 
-### Memory Debugging (v1.2+)
+### Memory Debugging (opt-in)
+
+**Requires `--experimentalMemory` in `mcp.flags`.** `take_heapsnapshot` is available
+by default, but the heap *analysis* tools below are only exposed when this flag is set.
 
 Analyze heap snapshots programmatically without leaving the agent:
 
 ```
-1. take_memory_snapshot { filePath: "/tmp/snapshot.heapsnapshot" }
-2. get_heapsnapshot_dominators { filePath: "/tmp/snapshot.heapsnapshot" }
+1. take_heapsnapshot { filePath: "/tmp/snapshot.heapsnapshot" }
+2. get_heapsnapshot_summary { filePath: "/tmp/snapshot.heapsnapshot" }
+   → Returns: object counts and retained sizes grouped by class
+3. get_heapsnapshot_dominators { filePath: "/tmp/snapshot.heapsnapshot" }
    → Returns: top nodes by retained size (find what's holding the most memory)
-3. get_heapsnapshot_edges { filePath: "/tmp/snapshot.heapsnapshot", nodeId: "12345" }
-   → Returns: outgoing references from a node
-4. get_retaining_paths { filePath: "/tmp/snapshot.heapsnapshot", nodeId: "12345" }
+4. get_heapsnapshot_retaining_paths { filePath: "/tmp/snapshot.heapsnapshot", nodeId: "12345" }
    → Returns: paths from GC roots to this node (why it's not garbage collected)
 5. close_heapsnapshot { filePath: "/tmp/snapshot.heapsnapshot" }
    → Releases memory used by the loaded snapshot
 ```
 
+Full heap tool set (with `--experimentalMemory`): `take_heapsnapshot`,
+`get_heapsnapshot_summary`, `get_heapsnapshot_dominators`, `get_heapsnapshot_edges`,
+`get_heapsnapshot_retainers`, `get_heapsnapshot_retaining_paths`,
+`get_heapsnapshot_class_nodes`, `get_heapsnapshot_details`,
+`get_heapsnapshot_duplicate_strings`, `compare_heapsnapshots`, `close_heapsnapshot`.
+
 ## Lighthouse
 
-**Required flag:** `--categoryLighthouse`
+**Availability:** on by default — no flag needed.
 
 ### Available Tools
 
@@ -121,7 +130,7 @@ after opening a modal) and don't want Lighthouse to reload the page:
 
 ## Console
 
-**Required flag:** `--categoryConsole`
+**Availability:** on by default — no flag needed.
 
 ### Available Tools
 
@@ -156,7 +165,7 @@ after opening a modal) and don't want Lighthouse to reload the page:
 
 ## Emulation
 
-**Required flag:** `--categoryEmulation`
+**Availability:** on by default — no flag needed.
 
 ### Available Tools
 
@@ -240,6 +249,6 @@ These categories work together for comprehensive analysis:
 1. performance_start_trace
 2. navigate_page { url: "https://slow-page.example.com" }
 3. performance_stop_trace → identify bottlenecks
-4. list_network_requests → find slow/large resources (requires --categoryNetwork)
+4. list_network_requests → find slow/large resources
 5. list_console_messages → check for JS errors causing delays
 ```

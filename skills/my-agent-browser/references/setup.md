@@ -29,7 +29,7 @@ This installs the skill (SKILL.md, scripts, references) to `<skill-dir>`.
 ### Step 2: Install the runtime dependency
 
 ```bash
-npm install -g chrome-devtools-mcp@^1.3.0
+npm install -g chrome-devtools-mcp@^1.5.0
 ```
 
 ### Step 3: Create your personal config
@@ -84,7 +84,9 @@ Edit `~/.config/agent-skills/my-agent-browser/config.json`:
     "proxy": "",
     "viewport": "1280x720",
     "debuggingPort": 39813,
-    "extraArgs": []
+    "extraArgs": [],
+    "browserUrl": "",
+    "lazyStart": true
   },
   "mcp": {
     "features": [],
@@ -101,12 +103,12 @@ Edit `~/.config/agent-skills/my-agent-browser/config.json`:
 | `browser.headless` | Run without visible window (`true` for servers/CI, `false` to watch the browser) | `true` |
 | `browser.lazyStart` | Delay Chrome launch until the first tool call (saves resources if browser isn't always needed) | `true` |
 | `browser.proxy` | HTTP proxy for all browser traffic. Leave empty to use no proxy. Agent can check environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`) to detect if a proxy is configured in the system and set this accordingly | `""` (none) |
-| `browser.viewport` | Browser window size as `WIDTHxHEIGHT` | `"1280x720"` |
+| `browser.viewport` | Window size as `WIDTHxHEIGHT` (e.g. `1280x720`), or `"maximized"` to maximize the window. `"maximized"` needs a real window (`headless: false`); in headless it falls back to `1920x1080`. Empty = Chrome default | `"1280x720"` |
+| `browser.display` | Linux only: fallback value for the `DISPLAY` env var when it's unset (e.g. `":0"`). WSLg is auto-detected, so this is rarely needed | `""` (auto) |
 | `browser.debuggingPort` | Chrome remote debugging port | `39813` |
 | `browser.browserUrl` | Connect to an existing Chrome instance instead of launching one (e.g. `http://127.0.0.1:9222`). When set, `headless`/`userDataDir`/`extraArgs` are ignored | `""` (launch new) |
 | `browser.extraArgs` | Additional Chrome command-line flags (see below) | `[]` |
-| `mcp.features` | Feature flags that change tool behavior (e.g. `--vision`) | `[]` |
-| `mcp.flags` | Category flags that unlock additional tool groups (e.g. `--categoryNetwork`) | `[]` |
+| `mcp.features` / `mcp.flags` | Both are passthrough arrays of CLI flags for `chrome-devtools-mcp`. Merged and forwarded as-is; the split is only cosmetic. See "Tuning the tool set" below | `[]` |
 
 ### Common `extraArgs` flags
 
@@ -187,53 +189,52 @@ Leave it unset to use Chrome's built-in default, which is usually sufficient.
 
 Note: Chrome locks user-data-dir, so you can't use the same profile simultaneously from two processes.
 
-### Understanding `mcp.features` vs `mcp.flags`
+### Tuning the tool set (`mcp.flags` / `mcp.features`)
 
-The `mcp` section of config.json has two arrays that serve different purposes:
+Both arrays are passed straight through to `chrome-devtools-mcp` (merged in order).
+There is no functional difference between them — the split is cosmetic, pick either.
+The authoritative flag list is always `npx chrome-devtools-mcp@latest --help`.
 
-- **`flags`** — Category toggles that enable entire groups of tools. Each flag
-  unlocks a set of related MCP tools that the agent can call. Without the flag,
-  those tools are hidden from the agent entirely. Example: `--categoryNetwork`
-  enables `list_network_requests` and `get_network_request`.
+**You usually need nothing here.** Out of the box, chrome-devtools-mcp already
+exposes the full tool set: navigation, snapshots, interaction, **plus network,
+performance, emulation, lighthouse and console tools**. The `--categoryNetwork`,
+`--categoryPerformance` and `--categoryEmulation` groups default to *on*; lighthouse
+and console tools are part of the default set too. Verified with `mcp.flags: []` →
+29 tools exposed. So there is no "unlock advanced tools" step — they're already there.
 
-- **`features`** — Individual feature flags that change chrome-devtools-mcp's
-  behavior or output format. These don't add new tools; they modify how existing
-  tools work. Example: `--vision` makes `take_snapshot` return a screenshot
-  image instead of an accessibility-tree text representation.
+Use `mcp.flags` only to **shrink** or **extend** that default:
 
-In short: `flags` control *which tools are available*, `features` control *how
-tools behave*.
+**Shrink** — fewer tools = less context:
 
-### Full mode (performance, network, lighthouse)
+| Flag | Effect |
+|------|--------|
+| `--no-categoryNetwork` | Drop `list_network_requests` / `get_network_request` |
+| `--no-categoryPerformance` | Drop the performance / trace tools |
+| `--no-categoryEmulation` | Drop `emulate` |
+| `--slim` | Minimal 3-tool set: navigation, `evaluate_script`, screenshot |
 
-By default, only core browser automation tools are available. To unlock advanced capabilities, add category flags to `mcp.flags`:
+**Extend** — opt-in groups, off by default:
+
+| Flag | Effect |
+|------|--------|
+| `--experimentalMemory` | Heap-snapshot analysis (`get_heapsnapshot_dominators`, `get_heapsnapshot_retaining_paths`, `compare_heapsnapshots`, …) |
+| `--categoryExtensions` | Chrome extension tools (pipe connection only) |
+| `--experimentalVision` | Coordinate-based `click_at(x, y)` (needs a vision / computer-use model) |
+| `--experimentalScreencast` | Screencast recording (requires ffmpeg on PATH) |
+
+Example — trim network/performance and add coordinate clicking:
 
 ```json
 {
   "mcp": {
-    "flags": [
-      "--categoryPerformance",
-      "--categoryNetwork",
-      "--categoryLighthouse",
-      "--categoryConsole",
-      "--categoryEmulation"
-    ]
+    "flags": ["--no-categoryNetwork", "--no-categoryPerformance", "--experimentalVision"]
   }
 }
 ```
 
-Available categories:
-
-| Flag | Tools unlocked |
-|------|---------------|
-| `--categoryPerformance` | `performance_start_trace`, `performance_stop_trace`, `performance_analyze_insight`, `take_memory_snapshot`, `close_heapsnapshot`, `get_heapsnapshot_dominators`, `get_heapsnapshot_edges`, `get_retaining_paths` |
-| `--categoryNetwork` | `list_network_requests`, `get_network_request` |
-| `--categoryLighthouse` | `lighthouse_audit` (navigation and snapshot modes) |
-| `--categoryConsole` | `list_console_messages`, `get_console_message` |
-| `--categoryEmulation` | `emulate` (network conditions, CPU throttling, geolocation, color scheme, user agent, extra HTTP headers) |
-| `--categoryExtensions` | `list_extensions`, `install_extension`, `uninstall_extension`, `reload_extension` (includes extension service worker logs) |
-
-You can enable all categories at once or pick only what you need. More categories = more tools exposed to the agent = slightly longer tool list in context.
+> Note: `chrome-devtools-mcp` does not error on unknown flags — a typo or a
+> removed flag is silently ignored. If a flag seems to have no effect, check the
+> exact spelling against `--help`.
 
 ### Connecting to an existing Chrome instance
 

@@ -21,7 +21,11 @@
         },
         "viewport": {
           "type": "string",
-          "description": "视口尺寸（如 1280x720）"
+          "description": "窗口尺寸：\"WIDTHxHEIGHT\"（如 1280x720），或 \"maximized\" 最大化窗口（headless 下自动回退为 1920x1080）。留空用 Chrome 默认"
+        },
+        "display": {
+          "type": "string",
+          "description": "Linux 专用：无 DISPLAY 环境变量时的回退值（如 \":0\"）。WSLg 已自动探测，通常无需设置"
         },
         "debuggingPort": {
           "type": "integer",

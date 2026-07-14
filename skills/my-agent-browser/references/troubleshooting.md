@@ -35,7 +35,7 @@ to see what's actually on the page. Common causes:
 
 Check:
 1. Is Chrome/Chromium installed? (`which google-chrome`)
-2. Is the CDP port already in use? (`curl http://127.0.0.1:19333/json/version`)
+2. Is the CDP port already in use? (`curl http://127.0.0.1:39813/json/version` — matches `debuggingPort` in config)
 3. On Linux without display: set `"headless": true` in config
 4. On WSL/containers: add `"--no-sandbox"` to `extraArgs`
 

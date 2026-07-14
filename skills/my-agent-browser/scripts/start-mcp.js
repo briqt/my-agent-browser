@@ -191,6 +191,40 @@ function findChrome() {
   return null;
 }
 
+// Build the Chrome command-line arguments from browser config.
+// Pure function (no side effects) so it can be unit-tested in isolation.
+function buildChromeArgs(b, port, userDataDir) {
+  const args = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${userDataDir}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--hide-crash-restore-bubble",
+  ];
+
+  if (b.headless) args.push("--headless=new");
+  if (b.proxy) args.push(`--proxy-server=${b.proxy}`);
+  // viewport controls the launched window size:
+  //  - "maximized": open a maximized window. --start-maximized needs a window
+  //    manager, so it is a no-op in headless mode — there we fall back to a large
+  //    fixed size instead.
+  //  - "WIDTHxHEIGHT": fixed size.
+  //  - unset/empty: Chrome default.
+  if (b.viewport === "maximized") {
+    if (b.headless) {
+      args.push("--window-size=1920,1080");
+    } else {
+      args.push("--start-maximized");
+    }
+  } else if (b.viewport) {
+    const [w, h] = String(b.viewport).split("x");
+    args.push(`--window-size=${w},${h}`);
+  }
+  for (const arg of b.extraArgs || []) args.push(arg);
+
+  return args;
+}
+
 function launchChrome(config, port) {
   const b = config.browser || {};
   const userDataDir = b.userDataDir
@@ -212,21 +246,7 @@ function launchChrome(config, port) {
     );
   }
 
-  const args = [
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${userDataDir}`,
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--hide-crash-restore-bubble",
-  ];
-
-  if (b.headless) args.push("--headless=new");
-  if (b.proxy) args.push(`--proxy-server=${b.proxy}`);
-  if (b.viewport) {
-    const [w, h] = b.viewport.split("x");
-    args.push(`--window-size=${w},${h}`);
-  }
-  for (const arg of b.extraArgs || []) args.push(arg);
+  const args = buildChromeArgs(b, port, userDataDir);
 
   // Clean stale profile locks
   for (const lockName of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
@@ -296,12 +316,16 @@ function findMcpBin() {
   return null;
 }
 
-function buildMcpArgs(config, port) {
+function buildMcpArgs(config, browserUrl) {
   const m = config.mcp || {};
-  const args = [`--browserUrl=http://127.0.0.1:${port}`];
+  const args = [`--browserUrl=${browserUrl}`];
   for (const f of m.features || []) args.push(f);
   for (const f of m.flags || []) args.push(f);
   return args;
+}
+
+function localBrowserUrl(port) {
+  return `http://127.0.0.1:${port}`;
 }
 
 function buildNoProxyEnv() {
@@ -328,7 +352,7 @@ function startMcp(args, { pipe = false } = {}) {
     return spawn(bin, args, { stdio, env });
   }
   const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-  return spawn(npx, ["-y", "chrome-devtools-mcp@^1.3.0", ...args], { stdio, env });
+  return spawn(npx, ["-y", "chrome-devtools-mcp@^1.5.0", ...args], { stdio, env });
 }
 
 // --- Cleanup on exit ---
@@ -463,7 +487,7 @@ function responseHasStaleStateError(line) {
 // --- Lazy start: stdin proxy with on-demand Chrome launch ---
 
 function startLazy(config, port) {
-  const mcpArgs = buildMcpArgs(config, port);
+  const mcpArgs = buildMcpArgs(config, localBrowserUrl(port));
   let child = startMcp(mcpArgs, { pipe: true });
 
   let state = "pending"; // "pending" → "launching" → "ready" | "failed"
@@ -773,10 +797,7 @@ async function main() {
   // Direct connection mode
   if (b.browserUrl) {
     process.stderr.write(`[my-agent-browser] direct mode: connecting to ${b.browserUrl}\n`);
-    const m = config.mcp || {};
-    const args = [`--browserUrl=${b.browserUrl}`];
-    for (const f of m.features || []) args.push(f);
-    for (const f of m.flags || []) args.push(f);
+    const args = buildMcpArgs(config, b.browserUrl);
     const child = startMcp(args);
     child.on("error", (err) => {
       process.stderr.write(`[my-agent-browser] spawn error: ${err.message}\n`);
@@ -805,7 +826,7 @@ async function main() {
     child = startLazy(config, port);
   } else {
     await ensureChrome(config, port);
-    const mcpArgs = buildMcpArgs(config, port);
+    const mcpArgs = buildMcpArgs(config, localBrowserUrl(port));
     child = startMcp(mcpArgs);
   }
 
@@ -820,8 +841,14 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  process.stderr.write(`[my-agent-browser] FATAL: ${err.message}\n`);
-  process.stderr.write(`[my-agent-browser] The MCP server cannot start. Fix the issue above and restart your agent session.\n`);
-  process.exit(1);
-});
+// Only run the server when executed directly, so the pure helpers above
+// (buildChromeArgs / buildMcpArgs) can be require()'d from tests.
+if (require.main === module) {
+  main().catch((err) => {
+    process.stderr.write(`[my-agent-browser] FATAL: ${err.message}\n`);
+    process.stderr.write(`[my-agent-browser] The MCP server cannot start. Fix the issue above and restart your agent session.\n`);
+    process.exit(1);
+  });
+}
+
+module.exports = { buildChromeArgs, buildMcpArgs, localBrowserUrl, expandHome };

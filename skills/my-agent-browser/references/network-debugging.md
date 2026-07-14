@@ -2,7 +2,7 @@
 
 Guide for debugging network requests using the Network category tools.
 
-**Required flag:** `--categoryNetwork` in `mcp.flags`
+**Availability:** on by default — no flag needed. (Disable with `--no-categoryNetwork` in `mcp.flags` if you want to shrink the tool set.)
 
 ## Available Tools
 

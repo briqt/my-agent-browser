@@ -4,6 +4,7 @@
     "headless": true,
     "proxy": "",
     "viewport": "1280x720",
+    "display": "",
     "debuggingPort": 39813,
     "extraArgs": [],
     "browserUrl": "",
