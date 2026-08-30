@@ -29,7 +29,7 @@ This installs the skill (SKILL.md, scripts, references) to `<skill-dir>`.
 ### Step 2: Install the runtime dependency
 
 ```bash
-npm install -g chrome-devtools-mcp@^1.5.0
+npm install -g chrome-devtools-mcp@^1.8.0
 ```
 
 ### Step 3: Create your personal config
@@ -202,6 +202,13 @@ performance, emulation, lighthouse and console tools**. The `--categoryNetwork`,
 and console tools are part of the default set too. Verified with `mcp.flags: []` →
 29 tools exposed. So there is no "unlock advanced tools" step — they're already there.
 
+**`pageId` routing:** chrome-devtools-mcp 1.8+ requires `pageId` on every
+page-scoped tool (`click`, `fill`, `take_snapshot`, …) unless you opt out.
+`start-mcp.js` therefore injects `--no-page-id-routing` so the existing
+`select_page` + uid workflow keeps working. To use pageId routing (useful when
+several agents share one Chrome), put `--pageIdRouting` in `mcp.flags` — the
+wrapper will not override an explicit choice.
+
 Use `mcp.flags` only to **shrink** or **extend** that default:
 
 **Shrink** — fewer tools = less context:
@@ -217,10 +224,12 @@ Use `mcp.flags` only to **shrink** or **extend** that default:
 
 | Flag | Effect |
 |------|--------|
-| `--experimentalMemory` | Heap-snapshot analysis (`get_heapsnapshot_dominators`, `get_heapsnapshot_retaining_paths`, `compare_heapsnapshots`, …) |
+| `--memoryDebugging` (alias `--experimentalMemory`) | Heap-snapshot analysis (`get_heapsnapshot_dominators`, `get_heapsnapshot_retaining_paths`, `compare_heapsnapshots`, …) |
 | `--categoryExtensions` | Chrome extension tools (pipe connection only) |
 | `--experimentalVision` | Coordinate-based `click_at(x, y)` (needs a vision / computer-use model) |
 | `--experimentalScreencast` | Screencast recording (requires ffmpeg on PATH) |
+| `--pageIdRouting` | Require `pageId` on page-scoped tools (off by default in this wrapper) |
+| `--allowUnrestrictedPaths` | Allow file-writing tools outside the OS temp dir when the MCP client has no roots |
 
 Example — trim network/performance and add coordinate clicking:
 
@@ -232,9 +241,10 @@ Example — trim network/performance and add coordinate clicking:
 }
 ```
 
-> Note: `chrome-devtools-mcp` does not error on unknown flags — a typo or a
-> removed flag is silently ignored. If a flag seems to have no effect, check the
-> exact spelling against `--help`.
+> Note: chrome-devtools-mcp 1.8+ **warns** on unknown flags (it used to ignore
+> them silently). A typo still will not crash the server, but check `--help`
+> if a flag seems to have no effect. `--categoryPwa` exists but only works with
+> a pipe connection, not with this project's `--browserUrl` mode.
 
 ### Connecting to an existing Chrome instance
 

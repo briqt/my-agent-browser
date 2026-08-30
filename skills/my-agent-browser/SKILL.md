@@ -20,7 +20,7 @@ Browser automation for AI agents via `chrome-devtools-mcp` MCP server.
 
 If browser MCP tools (`navigate_page`, `take_snapshot`, `click`, `fill`) are not available in your tool list:
 
-1. Install: `npm install -g chrome-devtools-mcp@^1.5.0`
+1. Install: `npm install -g chrome-devtools-mcp@^1.8.0`
 2. Create config:
    ```bash
    mkdir -p ~/.config/agent-skills/my-agent-browser
@@ -95,7 +95,7 @@ These tool groups are **available by default** — no flags needed. See [referen
 - **Console**: `list_console_messages` / `get_console_message` — browser console
 - **Emulation**: `emulate` — throttle network/CPU, geolocation, color scheme
 
-`mcp.flags` in config is a passthrough to chrome-devtools-mcp. Use it to **shrink** the tool set (`--no-categoryNetwork` / `--no-categoryPerformance` / `--no-categoryEmulation`, or `--slim` for 3 tools) or to **add opt-in** groups (`--experimentalMemory` for heap-snapshot analysis, `--categoryExtensions`, `--experimentalVision` for coordinate `click_at`). Authoritative flag list: `npx chrome-devtools-mcp@latest --help`.
+`mcp.flags` in config is a passthrough to chrome-devtools-mcp. Use it to **shrink** the tool set (`--no-categoryNetwork` / `--no-categoryPerformance` / `--no-categoryEmulation`, or `--slim` for 3 tools) or to **add opt-in** groups (`--memoryDebugging` / `--experimentalMemory` for heap-snapshot analysis, `--categoryExtensions`, `--experimentalVision` for coordinate `click_at`). This wrapper disables 1.8's default `pageId` requirement so `select_page` + uid still works; pass `--pageIdRouting` in `mcp.flags` if you want it. Authoritative flag list: `npx chrome-devtools-mcp@latest --help`.
 
 ## Key Rules
 

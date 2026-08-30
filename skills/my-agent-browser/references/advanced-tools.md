@@ -61,7 +61,7 @@ The `.heapsnapshot` files can be loaded in Chrome DevTools Memory panel for comp
 
 ### Memory Debugging (opt-in)
 
-**Requires `--experimentalMemory` in `mcp.flags`.** `take_heapsnapshot` is available
+**Requires `--memoryDebugging` (alias `--experimentalMemory`) in `mcp.flags`.** `take_heapsnapshot` is available
 by default, but the heap *analysis* tools below are only exposed when this flag is set.
 
 Analyze heap snapshots programmatically without leaving the agent:
@@ -78,7 +78,7 @@ Analyze heap snapshots programmatically without leaving the agent:
    → Releases memory used by the loaded snapshot
 ```
 
-Full heap tool set (with `--experimentalMemory`): `take_heapsnapshot`,
+Full heap tool set (with `--memoryDebugging`): `take_heapsnapshot`,
 `get_heapsnapshot_summary`, `get_heapsnapshot_dominators`, `get_heapsnapshot_edges`,
 `get_heapsnapshot_retainers`, `get_heapsnapshot_retaining_paths`,
 `get_heapsnapshot_class_nodes`, `get_heapsnapshot_details`,

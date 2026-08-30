@@ -316,11 +316,30 @@ function findMcpBin() {
   return null;
 }
 
+function normalizeFlagName(flag) {
+  const raw = String(flag).trim();
+  const noDashes = raw.replace(/^--/, "");
+  const name = noDashes.split("=")[0];
+  return name.toLowerCase().replace(/-/g, "");
+}
+
+function hasPageIdRoutingFlag(flags) {
+  return flags.some((f) => {
+    const name = normalizeFlagName(f);
+    return name === "pageidrouting" || name === "nopageidrouting";
+  });
+}
+
 function buildMcpArgs(config, browserUrl) {
   const m = config.mcp || {};
-  const args = [`--browserUrl=${browserUrl}`];
-  for (const f of m.features || []) args.push(f);
-  for (const f of m.flags || []) args.push(f);
+  const userFlags = [...(m.features || []), ...(m.flags || [])];
+  const args = [`--browserUrl=${browserUrl}`, ...userFlags];
+  // chrome-devtools-mcp ≥1.8 requires pageId on every page-scoped tool by
+  // default. This skill's workflow is select_page + uid, so keep the old
+  // selected-page fallback unless the user set a pageIdRouting flag themselves.
+  if (!hasPageIdRoutingFlag(userFlags)) {
+    args.push("--no-page-id-routing");
+  }
   return args;
 }
 
@@ -352,7 +371,7 @@ function startMcp(args, { pipe = false } = {}) {
     return spawn(bin, args, { stdio, env });
   }
   const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-  return spawn(npx, ["-y", "chrome-devtools-mcp@^1.5.0", ...args], { stdio, env });
+  return spawn(npx, ["-y", "chrome-devtools-mcp@^1.8.0", ...args], { stdio, env });
 }
 
 // --- Cleanup on exit ---
@@ -851,4 +870,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildChromeArgs, buildMcpArgs, localBrowserUrl, expandHome };
+module.exports = { buildChromeArgs, buildMcpArgs, localBrowserUrl, expandHome, hasPageIdRoutingFlag };
