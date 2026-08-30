@@ -1,17 +1,20 @@
 # Multi-Tab Workflow
 
-## Opening New Tabs
+chrome-devtools-mcp routes page-scoped tools by **pageId**. Get ids from
+`list_pages` or `new_page`, then pass that pageId on every `take_snapshot` /
+`click` / `fill` / `evaluate_script` / `wait_for` / `navigate_page` call.
+`select_page` only focuses the tab; it does not replace `pageId` on later calls.
 
-Use `new_page` to open a tab and navigate to a URL:
+## Opening New Tabs
 
 ```
 new_page { url: "https://example.com" }
 ```
 
-The new tab becomes the active tab automatically. A snapshot is returned so you
-can immediately interact with the page.
+The response includes the new tab's pageId. Use that id for all following
+calls on this tab. A snapshot is often returned so you can interact immediately.
 
-To open a blank tab (useful when you want to navigate later):
+Blank tab (navigate later):
 
 ```
 new_page { url: "about:blank" }
@@ -19,119 +22,105 @@ new_page { url: "about:blank" }
 
 ## Listing Open Tabs
 
-Use `list_pages` to see all open tabs with their index and URL:
-
 ```
 list_pages
 ```
 
-Returns a list like:
+Returns a numbered list like:
+
 ```
-[0] https://example.com - "Example Domain"
-[1] https://github.com - "GitHub"
-[2] about:blank
+## Pages
+1: Example Domain (https://example.com/) [selected]
+2: GitHub (https://github.com/)
 ```
 
-The currently active tab is marked in the output.
+The number before the colon is `pageId`. Ids stay unique across reconnects —
+do not assume they are 0-based indices or that they pack densely after a close.
 
 ## Switching Tabs
 
-Use `select_page` with the tab index from `list_pages`:
+Focus a tab (bring to front):
 
 ```
-select_page { index: 1 }
+select_page { pageId: 2 }
 ```
 
-After switching, take a snapshot to see the current state of that tab:
+Then still pass that same pageId on the next snapshot/click:
 
 ```
-take_snapshot
+take_snapshot { pageId: 2 }
 ```
 
 ## Closing Tabs
 
-Use `close_page` to close the current tab:
-
 ```
-close_page
+close_page { pageId: 2 }
 ```
 
-After closing, the browser switches to another open tab. Use `list_pages` to
-confirm which tab is now active.
+The last remaining page cannot be closed. After closing, `list_pages` to see
+what is left — remaining ids are **not** renumbered.
 
 ## Important: Tab-Scoped State
 
-Each tab has its own independent state:
-
-- **Snapshots** are per-tab. A snapshot from tab 0 does not apply to tab 1.
-- **UIDs** are per-tab and per-snapshot. Never use a UID from one tab to
-  interact with another tab.
-- **After switching tabs**, always `take_snapshot` before clicking or filling
-  elements — the UIDs from your previous tab are invalid in the new context.
+- **Snapshots** are per-tab. A snapshot from pageId 1 does not apply to pageId 2.
+- **UIDs** are per-tab and per-snapshot. Never use a UID from one tab on another.
+- Targeting is by pageId, not by "whatever is selected". After opening a second
+  tab, keep using each tab's own pageId.
 
 ## Workflow: Compare Two Pages Side by Side
 
-When you need to compare content across two pages (e.g., comparing prices,
-verifying data between source and destination):
-
 ```
-# Open first page
-navigate_page { url: "https://site-a.com/product" }
-take_snapshot
-# Extract data from page A (note it down)
+# Tab A
+new_page { url: "https://site-a.com/product" }
+→ pageId A (e.g. 1)
+take_snapshot { pageId: 1 }
+# Extract data from page A
 
-# Open second page in new tab
+# Tab B
 new_page { url: "https://site-b.com/product" }
-take_snapshot
+→ pageId B (e.g. 2)
+take_snapshot { pageId: 2 }
 # Extract data from page B
 
-# Switch back to first tab if needed
-select_page { index: 0 }
-take_snapshot
+# Back to A — pass A's pageId; select_page is optional (focus only)
+take_snapshot { pageId: 1 }
 ```
 
 ## Workflow: Open Link in New Tab, Extract Data, Return
 
-When you want to follow a link without losing your place on the current page:
-
 ```
-# You're on a page with a list of links
-take_snapshot
-# Note the current tab index (e.g., 0)
+# Listing tab
+list_pages → listingId (e.g. 1)
+take_snapshot { pageId: 1 }
 
-# Open the link target in a new tab instead of clicking it
-# First, get the href via evaluate_script if needed:
-evaluate_script { function: "document.querySelector('a.target-link').href" }
+evaluate_script { pageId: 1, function: "document.querySelector('a.target-link').href" }
 
-# Open in new tab
 new_page { url: "<the href value>" }
-take_snapshot
-# Extract what you need from the new tab
+→ detailId (e.g. 2)
+take_snapshot { pageId: 2 }
+# Extract what you need
 
-# Close the new tab and return
-close_page
-# You're back on the original tab
-take_snapshot
+close_page { pageId: 2 }
+take_snapshot { pageId: 1 }
 ```
 
 ## Workflow: Process Multiple Links from a List
 
-When you need to visit each link in a list and extract data:
-
 ```
-# Start on the listing page (tab 0)
-take_snapshot
-# Identify all links to process
+# Start on the listing page
+list_pages → listingId
+take_snapshot { pageId: listingId }
 
 # For each link:
 new_page { url: "<link-url>" }
-take_snapshot
+→ detailId
+take_snapshot { pageId: detailId }
 # Extract data
-close_page
+close_page { pageId: detailId }
 
-# Back on listing page — snapshot is stale, retake if DOM may have changed
-take_snapshot
+# Listing tab is unchanged — retake snapshot if its DOM may have changed
+take_snapshot { pageId: listingId }
 ```
 
-This pattern avoids navigation away from the listing page, so you never lose
+This pattern never navigates away from the listing page, so you do not lose
 your place or need to re-navigate.

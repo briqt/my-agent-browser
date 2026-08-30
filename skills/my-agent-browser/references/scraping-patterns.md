@@ -1,15 +1,16 @@
 # Scraping Patterns
 
 Best practices for extracting data from web pages using browser automation tools.
+Page-scoped tools require `pageId` from `list_pages` or `new_page`. Examples use `pageId` as that value.
 
 ## Pattern 1: Simple Page Scrape
 
 Navigate to a page, take a snapshot, and extract information from the accessibility tree.
 
 ```
-1. navigate_page { url: "https://news.example.com" }
-2. wait_for { text: ["Latest News"] }
-3. take_snapshot
+1. navigate_page { pageId, url: "https://news.example.com" }
+2. wait_for { pageId, text: ["Latest News"] }
+3. take_snapshot { pageId }
    → Read the tree structure to find article titles, links, dates
    → The accessibility tree gives you text content and link URLs directly
 ```
@@ -24,13 +25,13 @@ The accessibility tree already contains text content and link URLs — no need f
 Loop through pages, extracting data from each one.
 
 ```
-1. navigate_page { url: "https://shop.example.com/products?page=1" }
-2. wait_for { text: ["Products"] }
-3. take_snapshot → extract product names, prices, links from tree
-4. take_snapshot → find "Next" button uid
-5. click { uid: "1_99" }  — click Next
-6. wait_for { text: ["Page 2"] }  — or wait for content change
-7. take_snapshot → extract page 2 data
+1. navigate_page { pageId, url: "https://shop.example.com/products?page=1" }
+2. wait_for { pageId, text: ["Products"] }
+3. take_snapshot { pageId } → extract product names, prices, links from tree
+4. take_snapshot { pageId } → find "Next" button uid
+5. click { pageId, uid: "1_99" }  — click Next
+6. wait_for { pageId, text: ["Page 2"] }  — or wait for content change
+7. take_snapshot { pageId } → extract page 2 data
 8. Repeat until no "Next" button in snapshot
 ```
 
@@ -38,9 +39,9 @@ Alternative — URL-based pagination (more reliable):
 
 ```
 for page in 1, 2, 3, ...:
-  1. navigate_page { url: "https://shop.example.com/products?page={page}" }
-  2. wait_for { text: ["Products"] }
-  3. take_snapshot → extract data
+  1. navigate_page { pageId, url: "https://shop.example.com/products?page={page}" }
+  2. wait_for { pageId, text: ["Products"] }
+  3. take_snapshot { pageId } → extract data
   4. If snapshot shows "No results" or page is empty → stop
 ```
 
@@ -51,22 +52,22 @@ URL-based pagination avoids stale UID issues and is easier to resume if interrup
 For pages that load content asynchronously (infinite scroll, lazy loading, AJAX tabs):
 
 ```
-1. navigate_page { url: "https://app.example.com/feed" }
-2. wait_for { text: ["Feed"] }
-3. take_snapshot → extract visible items
-4. press_key { key: "End" }  — scroll to bottom to trigger lazy load
-5. wait_for { text: ["Loading complete"] }  — or a known item
-6. take_snapshot → extract newly loaded items
+1. navigate_page { pageId, url: "https://app.example.com/feed" }
+2. wait_for { pageId, text: ["Feed"] }
+3. take_snapshot { pageId } → extract visible items
+4. press_key { pageId, key: "End" }  — scroll to bottom to trigger lazy load
+5. wait_for { pageId, text: ["Loading complete"] }  — or a known item
+6. take_snapshot { pageId } → extract newly loaded items
 ```
 
 For content behind tabs or accordions:
 
 ```
-1. navigate_page { url: "https://example.com/product/123" }
-2. take_snapshot → find tab uid
-3. click { uid: "1_30" }  — click "Specifications" tab
-4. wait_for { text: ["Weight"] }  — wait for tab content
-5. take_snapshot → extract specification data
+1. navigate_page { pageId, url: "https://example.com/product/123" }
+2. take_snapshot { pageId } → find tab uid
+3. click { pageId, uid: "1_30" }  — click "Specifications" tab
+4. wait_for { pageId, text: ["Weight"] }  — wait for tab content
+5. take_snapshot { pageId } → extract specification data
 ```
 
 ## Pattern 4: Complex Extraction with evaluate_script
@@ -77,25 +78,25 @@ data with row/column relationships, or deeply nested data), use JavaScript:
 ### Extract a Table
 
 ```
-evaluate_script { function: "() => { const rows = document.querySelectorAll('table tbody tr'); return Array.from(rows).map(row => { const cells = row.querySelectorAll('td'); return { name: cells[0]?.textContent.trim(), price: cells[1]?.textContent.trim(), stock: cells[2]?.textContent.trim() }; }); }" }
+evaluate_script { pageId, function: "() => { const rows = document.querySelectorAll('table tbody tr'); return Array.from(rows).map(row => { const cells = row.querySelectorAll('td'); return { name: cells[0]?.textContent.trim(), price: cells[1]?.textContent.trim(), stock: cells[2]?.textContent.trim() }; }); }" }
 ```
 
 ### Extract All Links with Context
 
 ```
-evaluate_script { function: "() => { return Array.from(document.querySelectorAll('a[href]')).map(a => ({ text: a.textContent.trim(), href: a.href, parent: a.closest('article,section,div')?.className || '' })).filter(l => l.text); }" }
+evaluate_script { pageId, function: "() => { return Array.from(document.querySelectorAll('a[href]')).map(a => ({ text: a.textContent.trim(), href: a.href, parent: a.closest('article,section,div')?.className || '' })).filter(l => l.text); }" }
 ```
 
 ### Extract Structured Data (JSON-LD, meta tags)
 
 ```
-evaluate_script { function: "() => { const ld = document.querySelector('script[type=\"application/ld+json\"]'); return ld ? JSON.parse(ld.textContent) : null; }" }
+evaluate_script { pageId, function: "() => { const ld = document.querySelector('script[type=\"application/ld+json\"]'); return ld ? JSON.parse(ld.textContent) : null; }" }
 ```
 
 ### Extract Computed Styles or Dimensions
 
 ```
-evaluate_script { function: "() => { const el = document.querySelector('.hero-image'); const rect = el.getBoundingClientRect(); return { width: rect.width, height: rect.height, visible: rect.height > 0 }; }" }
+evaluate_script { pageId, function: "() => { const el = document.querySelector('.hero-image'); const rect = el.getBoundingClientRect(); return { width: rect.width, height: rect.height, visible: rect.height > 0 }; }" }
 ```
 
 Tips for `evaluate_script`:
@@ -140,12 +141,12 @@ Log in once manually, then reuse the profile:
 ### Option B: Automated Login
 
 ```
-1. navigate_page { url: "https://app.example.com/login" }
-2. take_snapshot → find email/password fields
-3. fill { uid: "1_5", value: "user@example.com" }
-4. fill { uid: "1_7", value: "password123" }
-5. click { uid: "1_10" }  — submit
-6. wait_for { text: ["Dashboard"] }
+1. navigate_page { pageId, url: "https://app.example.com/login" }
+2. take_snapshot { pageId } → find email/password fields
+3. fill { pageId, uid: "1_5", value: "user@example.com" }
+4. fill { pageId, uid: "1_7", value: "password123" }
+5. click { pageId, uid: "1_10" }  — submit
+6. wait_for { pageId, text: ["Dashboard"] }
 7. — Now proceed with scraping authenticated pages
 ```
 
@@ -176,10 +177,10 @@ If you have a Chrome instance already logged in:
 If you get blocked or rate-limited:
 
 ```
-1. navigate_page { url: "https://example.com/page" }
-2. take_snapshot
+1. navigate_page { pageId, url: "https://example.com/page" }
+2. take_snapshot { pageId }
    → If snapshot shows "Rate limited" or "Please wait":
-3. wait_for { text: ["expected content"] }  — with longer timeout
+3. wait_for { pageId, text: ["expected content"] }  — with longer timeout
    → Or navigate to a different section first, come back later
 ```
 
@@ -193,24 +194,24 @@ For large scraping jobs:
 ## Complete Example: Scrape Product Catalog
 
 ```
-1. navigate_page { url: "https://shop.example.com/category/electronics" }
-2. wait_for { text: ["Electronics"] }
-3. take_snapshot
+1. navigate_page { pageId, url: "https://shop.example.com/category/electronics" }
+2. wait_for { pageId, text: ["Electronics"] }
+3. take_snapshot { pageId }
    → Extract: product names, prices, ratings from the tree
    → Find: pagination controls
 
 4. — For each product that needs details:
-   click { uid: "1_15" }  — click product link
-   wait_for { text: ["Add to Cart"] }
-   take_snapshot → extract full description, specs, images
-   evaluate_script { function: "() => document.querySelector('.price').dataset.raw" }
-   navigate_page { url: "https://shop.example.com/category/electronics" }
-   wait_for { text: ["Electronics"] }
-   take_snapshot → get fresh UIDs for next product
+   click { pageId, uid: "1_15" }  — click product link
+   wait_for { pageId, text: ["Add to Cart"] }
+   take_snapshot { pageId } → extract full description, specs, images
+   evaluate_script { pageId, function: "() => document.querySelector('.price').dataset.raw" }
+   navigate_page { pageId, url: "https://shop.example.com/category/electronics" }
+   wait_for { pageId, text: ["Electronics"] }
+   take_snapshot { pageId } → get fresh UIDs for next product
 
 5. — Pagination:
-   take_snapshot → find "Next page" button
-   click { uid: "1_50" }
-   wait_for { text: ["Page 2"] }
-   take_snapshot → repeat extraction
+   take_snapshot { pageId } → find "Next page" button
+   click { pageId, uid: "1_50" }
+   wait_for { pageId, text: ["Page 2"] }
+   take_snapshot { pageId } → repeat extraction
 ```

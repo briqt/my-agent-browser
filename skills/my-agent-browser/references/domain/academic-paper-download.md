@@ -29,6 +29,7 @@ CNKI injects a verification widget into the DOM on every page load as a precauti
 
 ```
 evaluate_script {
+  pageId,
   function: "() => { document.querySelectorAll('[class*=\"captcha\"], [class*=\"verify\"], [class*=\"modal\"]').forEach(el => el.remove()); return 'cleaned'; }"
 }
 ```
@@ -96,6 +97,7 @@ When navigating to a PDF URL, the browser may render it inline rather than downl
 
 ```
 evaluate_script {
+  pageId,
   function: "() => { const a = document.createElement('a'); a.href = window.location.href; a.download = 'filename.pdf'; document.body.appendChild(a); a.click(); a.remove(); return 'triggered'; }"
 }
 ```

@@ -16,7 +16,7 @@ heap-memory *analysis* is opt-in (`--experimentalMemory` in `mcp.flags`). See
 | `performance_start_trace` | Begin recording a performance trace |
 | `performance_stop_trace` | Stop recording and return trace results |
 | `performance_analyze_insight { insightName, insightSetId }` | Deep-dive into a specific insight from the trace |
-| `take_heapsnapshot { filePath }` | Capture a V8 heap snapshot to disk |
+| `take_heapsnapshot { pageId, filePath }` | Capture a V8 heap snapshot to disk |
 
 Heap-snapshot *analysis* tools (dominators, retaining paths, etc.) are opt-in — see
 [Memory Debugging](#memory-debugging-opt-in) below.
@@ -24,11 +24,11 @@ Heap-snapshot *analysis* tools (dominators, retaining paths, etc.) are opt-in �
 ### Workflow: Profile a Page Load
 
 ```
-1. navigate_page { url: "about:blank" }
-2. performance_start_trace
-3. navigate_page { url: "https://example.com/dashboard" }
-4. wait_for { text: ["Dashboard loaded"] }
-5. performance_stop_trace
+1. navigate_page { pageId, url: "about:blank" }
+2. performance_start_trace { pageId }
+3. navigate_page { pageId, url: "https://example.com/dashboard" }
+4. wait_for { pageId, text: ["Dashboard loaded"] }
+5. performance_stop_trace { pageId }
    → Returns: summary with metrics (FCP, LCP, CLS, TBT) and a list of insights
 6. performance_analyze_insight { id: "lcp-element", type: "lcp" }
    → Returns: details about the LCP element, what delayed it, suggestions
@@ -37,12 +37,12 @@ Heap-snapshot *analysis* tools (dominators, retaining paths, etc.) are opt-in �
 ### Workflow: Profile an Interaction
 
 ```
-1. navigate_page { url: "https://app.example.com" }
-2. take_snapshot → find the button uid
-3. performance_start_trace
-4. click { uid: "1_42" }
-5. wait_for { text: ["Results"] }
-6. performance_stop_trace
+1. navigate_page { pageId, url: "https://app.example.com" }
+2. take_snapshot { pageId } → find the button uid
+3. performance_start_trace { pageId }
+4. click { pageId, uid: "1_42" }
+5. wait_for { pageId, text: ["Results"] }
+6. performance_stop_trace { pageId }
    → Shows how long the interaction took, JS execution time, layout shifts
 ```
 
@@ -51,10 +51,10 @@ Heap-snapshot *analysis* tools (dominators, retaining paths, etc.) are opt-in �
 Use `take_heapsnapshot` to capture heap state for memory leak investigation:
 
 ```
-1. navigate_page { url: "https://app.example.com" }
-2. take_heapsnapshot { filePath: "/tmp/before.heapsnapshot" }
-3. click { uid: "1_10" }   — trigger the suspected leak
-4. take_heapsnapshot { filePath: "/tmp/after.heapsnapshot" }
+1. navigate_page { pageId, url: "https://app.example.com" }
+2. take_heapsnapshot { pageId, filePath: "/tmp/before.heapsnapshot" }
+3. click { pageId, uid: "1_10" }   — trigger the suspected leak
+4. take_heapsnapshot { pageId, filePath: "/tmp/after.heapsnapshot" }
 ```
 
 The `.heapsnapshot` files can be loaded in Chrome DevTools Memory panel for comparison.
@@ -67,7 +67,7 @@ by default, but the heap *analysis* tools below are only exposed when this flag 
 Analyze heap snapshots programmatically without leaving the agent:
 
 ```
-1. take_heapsnapshot { filePath: "/tmp/snapshot.heapsnapshot" }
+1. take_heapsnapshot { pageId, filePath: "/tmp/snapshot.heapsnapshot" }
 2. get_heapsnapshot_summary { filePath: "/tmp/snapshot.heapsnapshot" }
    → Returns: object counts and retained sizes grouped by class
 3. get_heapsnapshot_dominators { filePath: "/tmp/snapshot.heapsnapshot" }
@@ -102,8 +102,8 @@ Full heap tool set (with `--memoryDebugging`): `take_heapsnapshot`,
 ### Workflow: Full Page Audit
 
 ```
-1. navigate_page { url: "https://example.com" }
-2. lighthouse_audit { mode: "navigation", device: "mobile" }
+1. navigate_page { pageId, url: "https://example.com" }
+2. lighthouse_audit { pageId, mode: "navigation", device: "mobile" }
    → Returns: scores for Performance, Accessibility, Best Practices, SEO
    → Plus specific diagnostics and opportunities
 ```
@@ -114,10 +114,10 @@ Use snapshot mode when you've navigated to a specific state (e.g., after login,
 after opening a modal) and don't want Lighthouse to reload the page:
 
 ```
-1. navigate_page { url: "https://app.example.com/login" }
-2. take_snapshot → fill login form → click submit
-3. wait_for { text: ["Dashboard"] }
-4. lighthouse_audit { mode: "snapshot", device: "desktop" }
+1. navigate_page { pageId, url: "https://app.example.com/login" }
+2. take_snapshot { pageId } → fill login form → click submit
+3. wait_for { pageId, text: ["Dashboard"] }
+4. lighthouse_audit { pageId, mode: "snapshot", device: "desktop" }
    → Audits the post-login dashboard state
 ```
 
@@ -142,9 +142,9 @@ after opening a modal) and don't want Lighthouse to reload the page:
 ### Workflow: Find JavaScript Errors
 
 ```
-1. navigate_page { url: "https://example.com" }
-2. take_snapshot — interact with the page as needed
-3. list_console_messages
+1. navigate_page { pageId, url: "https://example.com" }
+2. take_snapshot { pageId } — interact with the page as needed
+3. list_console_messages { pageId }
    → Returns: list of messages with id, type (log/warn/error/info), and text preview
 4. get_console_message { id: "msg_3" }
    → Returns: full message text, stack trace, source location
@@ -187,35 +187,35 @@ after opening a modal) and don't want Lighthouse to reload the page:
 ### Workflow: Test on Slow 3G
 
 ```
-1. emulate { networkConditions: "slow-3g", cpuThrottlingRate: 4 }
-2. navigate_page { url: "https://example.com" }
-3. take_snapshot — check if content loads acceptably
-4. emulate { networkConditions: null, cpuThrottlingRate: 1 }  — reset
+1. emulate { pageId, networkConditions: "slow-3g", cpuThrottlingRate: 4 }
+2. navigate_page { pageId, url: "https://example.com" }
+3. take_snapshot { pageId } — check if content loads acceptably
+4. emulate { pageId, networkConditions: null, cpuThrottlingRate: 1 }  — reset
 ```
 
 ### Workflow: Test Dark Mode
 
 ```
-1. emulate { colorScheme: "dark" }
-2. navigate_page { url: "https://example.com" }
+1. emulate { pageId, colorScheme: "dark" }
+2. navigate_page { pageId, url: "https://example.com" }
 3. take_screenshot — visually verify dark mode rendering
-4. emulate { colorScheme: "light" }  — reset
+4. emulate { pageId, colorScheme: "light" }  — reset
 ```
 
 ### Workflow: Test Mobile Viewport
 
 ```
-1. emulate { viewport: { width: 375, height: 812 }, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15" }
-2. navigate_page { url: "https://example.com" }
-3. take_snapshot — check responsive layout
+1. emulate { pageId, viewport: { width: 375, height: 812 }, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15" }
+2. navigate_page { pageId, url: "https://example.com" }
+3. take_snapshot { pageId } — check responsive layout
 ```
 
 ### Workflow: Test Geolocation-Dependent Features
 
 ```
-1. emulate { geolocation: { latitude: 35.6762, longitude: 139.6503 } }
-2. navigate_page { url: "https://maps.example.com" }
-3. take_snapshot — verify location-based content shows Tokyo
+1. emulate { pageId, geolocation: { latitude: 35.6762, longitude: 139.6503 } }
+2. navigate_page { pageId, url: "https://maps.example.com" }
+3. take_snapshot { pageId } — verify location-based content shows Tokyo
 ```
 
 ### Tips
@@ -233,21 +233,21 @@ These categories work together for comprehensive analysis:
 ### Full Performance Audit Workflow
 
 ```
-1. emulate { networkConditions: "fast-3g", cpuThrottlingRate: 2 }
-2. performance_start_trace
-3. navigate_page { url: "https://example.com" }
-4. wait_for { text: ["loaded"] }
+1. emulate { pageId, networkConditions: "fast-3g", cpuThrottlingRate: 2 }
+2. performance_start_trace { pageId }
+3. navigate_page { pageId, url: "https://example.com" }
+4. wait_for { pageId, text: ["loaded"] }
 5. performance_stop_trace → check metrics under throttled conditions
 6. list_console_messages → check for errors during load
-7. lighthouse_audit { mode: "navigation", device: "mobile" } → full audit
-8. emulate { networkConditions: null, cpuThrottlingRate: 1 } → reset
+7. lighthouse_audit { pageId, mode: "navigation", device: "mobile" } → full audit
+8. emulate { pageId, networkConditions: null, cpuThrottlingRate: 1 } → reset
 ```
 
 ### Debug a Slow Page
 
 ```
-1. performance_start_trace
-2. navigate_page { url: "https://slow-page.example.com" }
+1. performance_start_trace { pageId }
+2. navigate_page { pageId, url: "https://slow-page.example.com" }
 3. performance_stop_trace → identify bottlenecks
 4. list_network_requests → find slow/large resources
 5. list_console_messages → check for JS errors causing delays

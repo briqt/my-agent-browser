@@ -9,10 +9,20 @@ The browser has no open tabs. Create one:
 new_page { url: "about:blank" }
 ```
 
+### "Required at pageId" / invalid arguments for page-scoped tools
+
+chrome-devtools-mcp 1.8+ requires `pageId` on `click`, `fill`, `take_snapshot`,
+`navigate_page`, `evaluate_script`, `wait_for`, and other page-scoped tools.
+Call `list_pages` or `new_page` first and pass that id. `select_page` does not
+remove the requirement.
+
+Do not add `--no-page-id-routing` unless you intentionally want selected-page
+fallback.
+
 ### Click/fill does nothing or targets wrong element
 
 The page changed since your last snapshot. UIDs are tied to the DOM state at
-snapshot time. Solution: `take_snapshot` again and use the fresh UIDs.
+snapshot time. Solution: `take_snapshot { pageId }` again and use the fresh UIDs.
 
 ### Element not visible in snapshot
 
@@ -21,11 +31,11 @@ Possible causes:
 - Element is inside an iframe (not captured by default)
 - Element is dynamically loaded (use `wait_for` first)
 
-Try `evaluate_script { function: "document.querySelector('selector').textContent" }` to verify the element exists.
+Try `evaluate_script { pageId, function: "document.querySelector('selector').textContent" }` to verify the element exists.
 
 ### Timeout on `wait_for`
 
-The expected text never appeared. Check current page state with `take_snapshot`
+The expected text never appeared. Check current page state with `take_snapshot { pageId }`
 to see what's actually on the page. Common causes:
 - Navigation failed silently
 - Page requires JavaScript that didn't execute
@@ -75,7 +85,7 @@ Pages with many DOM nodes (e.g., rich-text editors with 200+ paragraphs, long ta
 **Root cause**: The snapshot serializes the entire accessibility tree. On a page with thousands of nodes, this produces a massive payload that exceeds memory limits.
 
 **Symptoms**:
-- Browser becomes unresponsive after `click { uid, includeSnapshot: true }`
+- Browser becomes unresponsive after `click { pageId, uid, includeSnapshot: true }`
 - `wait_for` hangs indefinitely on a page that clearly has the text
 - Agent reports "browser disconnected" or "target closed"
 - Repeated timeouts after injecting content into an editor
@@ -85,7 +95,7 @@ Pages with many DOM nodes (e.g., rich-text editors with 200+ paragraphs, long ta
 1. Always use `includeSnapshot: false` (or omit it) for `click`, `fill`, `hover` on heavy pages
 2. When you need to read page state, save the snapshot to a file instead of returning it inline:
    ```
-   take_snapshot { filePath: "/tmp/page-state.txt" }
+   take_snapshot { pageId, filePath: "/tmp/page-state.txt" }
    ```
 3. Then read only the portion you need (dialogs and modals are typically at the end):
    ```bash

@@ -202,12 +202,12 @@ performance, emulation, lighthouse and console tools**. The `--categoryNetwork`,
 and console tools are part of the default set too. Verified with `mcp.flags: []` →
 29 tools exposed. So there is no "unlock advanced tools" step — they're already there.
 
-**`pageId` routing:** chrome-devtools-mcp 1.8+ requires `pageId` on every
-page-scoped tool (`click`, `fill`, `take_snapshot`, …) unless you opt out.
-`start-mcp.js` therefore injects `--no-page-id-routing` so the existing
-`select_page` + uid workflow keeps working. To use pageId routing (useful when
-several agents share one Chrome), put `--pageIdRouting` in `mcp.flags` — the
-wrapper will not override an explicit choice.
+**`pageId` routing is on by default** (chrome-devtools-mcp 1.8+). Page-scoped
+tools (`click`, `fill`, `take_snapshot`, `navigate_page`, `evaluate_script`,
+`wait_for`, …) require `pageId` from `list_pages` or `new_page`. That is the
+supported workflow — this wrapper does not turn it off. Pass
+`--no-page-id-routing` in `mcp.flags` only if you explicitly want calls to
+fall back to the currently selected page.
 
 Use `mcp.flags` only to **shrink** or **extend** that default:
 
@@ -228,7 +228,6 @@ Use `mcp.flags` only to **shrink** or **extend** that default:
 | `--categoryExtensions` | Chrome extension tools (pipe connection only) |
 | `--experimentalVision` | Coordinate-based `click_at(x, y)` (needs a vision / computer-use model) |
 | `--experimentalScreencast` | Screencast recording (requires ffmpeg on PATH) |
-| `--pageIdRouting` | Require `pageId` on page-scoped tools (off by default in this wrapper) |
 | `--allowUnrestrictedPaths` | Allow file-writing tools outside the OS temp dir when the MCP client has no roots |
 
 Example — trim network/performance and add coordinate clicking:

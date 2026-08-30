@@ -1,6 +1,7 @@
 # Network Debugging
 
 Guide for debugging network requests using the Network category tools.
+Page-scoped tools (`navigate_page`, `take_snapshot`, `click`, `list_network_requests`, …) require `pageId`.
 
 **Availability:** on by default — no flag needed. (Disable with `--no-categoryNetwork` in `mcp.flags` if you want to shrink the tool set.)
 
@@ -30,9 +31,9 @@ When filtering with `list_network_requests`, common resource types:
 ## Core Workflow
 
 ```
-1. navigate_page { url: "https://app.example.com" }
-2. take_snapshot → interact with the page (click buttons, submit forms)
-3. list_network_requests
+1. navigate_page { pageId, url: "https://app.example.com" }
+2. take_snapshot { pageId } → interact with the page (click buttons, submit forms)
+3. list_network_requests { pageId }
    → Returns: list of requests with reqid, url, method, status, resourceType, size
 4. get_network_request { reqid: "req_15" }
    → Returns: full headers, request body, response body, timing breakdown
@@ -41,11 +42,11 @@ When filtering with `list_network_requests`, common resource types:
 ## Workflow: Find Why an API Call Is Failing
 
 ```
-1. navigate_page { url: "https://app.example.com/dashboard" }
-2. take_snapshot
-3. click { uid: "1_20" }  — trigger the action that fails
-4. wait_for { text: ["Error"] }  — or just wait a moment
-5. list_network_requests
+1. navigate_page { pageId, url: "https://app.example.com/dashboard" }
+2. take_snapshot { pageId }
+3. click { pageId, uid: "1_20" }  — trigger the action that fails
+4. wait_for { pageId, text: ["Error"] }  — or just wait a moment
+5. list_network_requests { pageId }
    → Look for requests with status 4xx or 5xx
    → Example output:
      reqid=req_7  POST https://api.example.com/data  status=403  type=fetch
@@ -62,9 +63,9 @@ When filtering with `list_network_requests`, common resource types:
 ## Workflow: Identify Slow Requests
 
 ```
-1. navigate_page { url: "https://slow-app.example.com" }
-2. wait_for { text: ["Ready"] }
-3. list_network_requests
+1. navigate_page { pageId, url: "https://slow-app.example.com" }
+2. wait_for { pageId, text: ["Ready"] }
+3. list_network_requests { pageId }
    → Look at timing/size columns to find outliers
    → Sort mentally by response time or size
 4. get_network_request { reqid: "req_12" }
@@ -80,11 +81,11 @@ When filtering with `list_network_requests`, common resource types:
 When debugging form submissions or API integrations:
 
 ```
-1. navigate_page { url: "https://app.example.com/form" }
-2. take_snapshot → fill the form
-3. fill { uid: "1_5", value: "test data" }
-4. click { uid: "1_10" }  — submit
-5. list_network_requests
+1. navigate_page { pageId, url: "https://app.example.com/form" }
+2. take_snapshot { pageId } → fill the form
+3. fill { pageId, uid: "1_5", value: "test data" }
+4. click { pageId, uid: "1_10" }  — submit
+5. list_network_requests { pageId }
    → Find the POST/PUT request
 6. get_network_request { reqid: "req_5" }
    → Verify:
@@ -96,8 +97,8 @@ When debugging form submissions or API integrations:
 ## Workflow: Check What Resources a Page Loads
 
 ```
-1. navigate_page { url: "https://example.com" }
-2. list_network_requests
+1. navigate_page { pageId, url: "https://example.com" }
+2. list_network_requests { pageId }
    → See all resources: documents, scripts, stylesheets, images, fonts, API calls
    → Useful for:
      - Finding third-party scripts (analytics, ads)
