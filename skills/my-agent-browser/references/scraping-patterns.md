@@ -114,7 +114,6 @@ Sites may block automated browsers. Configure anti-detection in `~/.config/agent
   "browser": {
     "extraArgs": [
       "--disable-blink-features=AutomationControlled",
-      "--disable-infobars",
       "--disable-dev-shm-usage"
     ]
   }

@@ -117,7 +117,6 @@ These are Chrome command-line switches you can add to `browser.extraArgs`. Pick 
 | Flag | Effect |
 |------|--------|
 | `--disable-blink-features=AutomationControlled` | Hide the `navigator.webdriver` property so sites don't detect automation |
-| `--disable-infobars` | Suppress "Chrome is being controlled by automated software" bar |
 | `--disable-dev-shm-usage` | Use `/tmp` instead of `/dev/shm` for shared memory (fixes crashes in Docker/low-memory) |
 | `--disable-gpu` | Disable GPU hardware acceleration (useful for headless or environments without GPU) |
 | `--no-first-run` | Skip Chrome's first-run experience and welcome page |
@@ -133,7 +132,6 @@ These are Chrome command-line switches you can add to `browser.extraArgs`. Pick 
 | `--disable-component-update` | Disable component (Widevine, etc.) auto-updates |
 | `--disable-domain-reliability` | Disable domain reliability monitoring (no telemetry pings) |
 | `--disable-features=TranslateUI` | Disable the translate UI bubble |
-| `--enable-automation=false` | Prevent setting `navigator.webdriver=true` |
 | `--no-sandbox` | Disable sandbox (required in some Docker/CI environments, reduces security) |
 | `--proxy-server=HOST:PORT` | Route traffic through a proxy (alternative to the `proxy` field) |
 | `--user-agent=STRING` | Override the default User-Agent string. Leave unset to use Chrome's default UA |
@@ -145,7 +143,6 @@ A recommended set for automation that avoids bot detection and reduces noise:
   "browser": {
     "extraArgs": [
       "--disable-blink-features=AutomationControlled",
-      "--disable-infobars",
       "--disable-dev-shm-usage",
       "--disable-gpu",
       "--disable-background-networking",
@@ -158,8 +155,7 @@ A recommended set for automation that avoids bot detection and reduces noise:
       "--disable-client-side-phishing-detection",
       "--disable-component-update",
       "--disable-domain-reliability",
-      "--disable-features=TranslateUI",
-      "--enable-automation=false"
+      "--disable-features=TranslateUI"
     ]
   }
 }

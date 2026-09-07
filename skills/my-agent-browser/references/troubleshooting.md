@@ -71,8 +71,7 @@ If sites detect automation, add anti-detection flags to config:
 {
   "browser": {
     "extraArgs": [
-      "--disable-blink-features=AutomationControlled",
-      "--disable-infobars"
+      "--disable-blink-features=AutomationControlled"
     ]
   }
 }
