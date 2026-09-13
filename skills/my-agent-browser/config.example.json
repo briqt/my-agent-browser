@@ -6,12 +6,29 @@
     "viewport": "1280x720",
     "display": "",
     "debuggingPort": 39813,
-    "extraArgs": [],
+    "extraArgs": [
+      "--disable-dev-shm-usage",
+      "--disable-background-networking",
+      "--disable-sync",
+      "--disable-translate",
+      "--metrics-recording-only",
+      "--mute-audio",
+      "--disable-hang-monitor",
+      "--disable-prompt-on-repost",
+      "--disable-client-side-phishing-detection",
+      "--disable-component-update",
+      "--disable-domain-reliability",
+      "--disable-features=TranslateUI"
+    ],
     "browserUrl": "",
     "lazyStart": true
   },
   "mcp": {
     "features": [],
     "flags": []
+  },
+  "stealth": {
+    "evaluateScript": true,
+    "sourceUrl": "eval.js"
   }
 }

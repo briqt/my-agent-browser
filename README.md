@@ -27,7 +27,8 @@ Production-ready wrapper around [chrome-devtools-mcp](https://github.com/ChromeD
 ### Config-driven + Anti-detection
 
 - Headless mode, proxy, viewport size, custom launch args — all Chrome startup flags configurable
-- Pass any Chrome flags via `extraArgs` to reduce automation detection risk (e.g. `--disable-blink-features=AutomationControlled`)
+- `evaluate_script` stack traces are stripped of the `pptr:` marker and the MCP install path (which normally leaks your OS username) — measured against a site-origin trap, see [anti-detection.md](skills/my-agent-browser/references/anti-detection.md)
+- Flag recommendations backed by one-flag-at-a-time measurements rather than folklore
 - Direct connection to existing Chrome (`browserUrl` mode, for pre-authenticated long-lived sessions)
 
 ### Agent Workflow Guidance (SKILL.md)
@@ -124,11 +125,14 @@ The bundled SKILL.md provides workflow guidance so agents avoid common pitfalls:
 ├── skills/my-agent-browser/
 │   ├── SKILL.md                 # Agent workflow guide
 │   ├── scripts/
-│   │   └── start-mcp.js        # MCP server wrapper
+│   │   ├── start-mcp.js        # MCP server wrapper
+│   │   ├── start-mcp.test.js   # Unit tests (node --test)
+│   │   └── stealth-e2e.js      # End-to-end stack-trace leak check
 │   ├── config.example.json      # Config template
 │   ├── config.schema.json       # JSON Schema for config validation
 │   └── references/
 │       ├── setup.md             # Installation & configuration
+│       ├── anti-detection.md    # Measured fingerprint/flag guidance
 │       ├── troubleshooting.md   # Common issues & fixes
 │       ├── advanced-tools.md    # Performance, Lighthouse, Console, Emulation
 │       ├── network-debugging.md # Network request inspection

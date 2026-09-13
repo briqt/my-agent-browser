@@ -109,6 +109,8 @@ Edit `~/.config/agent-skills/my-agent-browser/config.json`:
 | `browser.browserUrl` | Connect to an existing Chrome instance instead of launching one (e.g. `http://127.0.0.1:9222`). When set, `headless`/`userDataDir`/`extraArgs` are ignored | `""` (launch new) |
 | `browser.extraArgs` | Additional Chrome command-line flags (see below) | `[]` |
 | `mcp.features` / `mcp.flags` | Both are passthrough arrays of CLI flags for `chrome-devtools-mcp`. Merged and forwarded as-is; the split is only cosmetic. See "Tuning the tool set" below | `[]` |
+| `stealth.evaluateScript` | Rewrite `evaluate_script` so page-visible stack traces carry no `pptr:` marker and no MCP install path (that path usually contains your OS username). See [anti-detection.md](anti-detection.md) | `true` |
+| `stealth.sourceUrl` | The name rewritten scripts show as in stack traces. Single token, no whitespace | `"eval.js"` |
 
 ### Common `extraArgs` flags
 
@@ -116,9 +118,9 @@ These are Chrome command-line switches you can add to `browser.extraArgs`. Pick 
 
 | Flag | Effect |
 |------|--------|
-| `--disable-blink-features=AutomationControlled` | Hide the `navigator.webdriver` property so sites don't detect automation |
 | `--disable-dev-shm-usage` | Use `/tmp` instead of `/dev/shm` for shared memory (fixes crashes in Docker/low-memory) |
-| `--disable-gpu` | Disable GPU hardware acceleration (useful for headless or environments without GPU) |
+| `--ignore-gpu-blocklist` | Let Chrome use a GPU/Mesa driver it has blocklisted. Restores WebGL in WSL2, VMs and containers — see the WebGL note below |
+| `--enable-unsafe-swiftshader` | Software WebGL fallback for hosts with no GPU stack. Needed since Chrome 110 whenever `--disable-gpu` is used, or WebGL is unavailable entirely |
 | `--no-first-run` | Skip Chrome's first-run experience and welcome page |
 | `--disable-background-networking` | Prevent background network requests (update checks, safe browsing, etc.) |
 | `--disable-sync` | Disable Chrome account sync |
@@ -136,15 +138,36 @@ These are Chrome command-line switches you can add to `browser.extraArgs`. Pick 
 | `--proxy-server=HOST:PORT` | Route traffic through a proxy (alternative to the `proxy` field) |
 | `--user-agent=STRING` | Override the default User-Agent string. Leave unset to use Chrome's default UA |
 
-A recommended set for automation that avoids bot detection and reduces noise:
+### Flags to avoid
+
+Measured on Chrome 148, one flag at a time — details in [anti-detection.md](anti-detection.md):
+
+- **`--disable-gpu`** makes `getContext('webgl')` return `null`, because software
+  WebGL has needed an explicit `--enable-unsafe-swiftshader` since Chrome 110. A
+  browser with no WebGL is a stronger bot signal than any renderer string. Add it
+  only if you are hitting real GPU crashes, and pair it with the swiftshader flag.
+- **`--disable-blink-features=AutomationControlled`** does not change
+  `navigator.webdriver` here — only `--enable-automation` sets that, and nothing in
+  this skill passes it. The flag does trigger Chrome's yellow warning bar, costing
+  about 52px of viewport. Pair it with `--test-type` if you do need it.
+- **`--hide-scrollbars`** makes scrollbar width measure 0 where every real Chrome
+  reports 15. Use it only when you want screenshots without scrollbars.
+
+### WebGL
+
+If a site fingerprints WebGL, try in order and stop at the first that returns a
+renderer string: nothing at all → `--ignore-gpu-blocklist` → `--enable-unsafe-swiftshader`.
+The middle option yields a normal Mesa/llvmpipe string; the last yields SwiftShader,
+which reads as headless Chrome.
+
+A recommended set that reduces noise without damaging the fingerprint. Every flag
+here was measured to leave the browser indistinguishable from bare Chrome:
 
 ```json
 {
   "browser": {
     "extraArgs": [
-      "--disable-blink-features=AutomationControlled",
       "--disable-dev-shm-usage",
-      "--disable-gpu",
       "--disable-background-networking",
       "--disable-sync",
       "--disable-translate",

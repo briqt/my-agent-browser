@@ -63,6 +63,22 @@
           "description": "传递给 chrome-devtools-mcp 的额外 CLI 参数"
         }
       }
+    },
+    "stealth": {
+      "type": "object",
+      "description": "降低自动化痕迹的配置",
+      "properties": {
+        "evaluateScript": {
+          "type": "boolean",
+          "description": "改写 evaluate_script，使页面侧抓到的调用栈里不出现 pptr: 前缀和 MCP 安装路径（路径通常含系统用户名）。默认 true",
+          "default": true
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "改写后脚本在调用栈里显示的名字。必须是不含空白字符的单个 token",
+          "default": "eval.js"
+        }
+      }
     }
   }
 }

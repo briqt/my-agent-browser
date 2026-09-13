@@ -107,24 +107,22 @@ Tips for `evaluate_script`:
 
 ## Anti-Detection
 
-Sites may block automated browsers. Configure anti-detection in `~/.config/agent-skills/my-agent-browser/config.json`:
+Sites may block automated browsers. The short version, in the order that actually
+matters — full measurements in [anti-detection.md](anti-detection.md):
 
-```json
-{
-  "browser": {
-    "extraArgs": [
-      "--disable-blink-features=AutomationControlled",
-      "--disable-dev-shm-usage"
-    ]
-  }
-}
-```
+1. **Exit IP and pacing** dominate everything else. Use `browser.proxy`.
+2. **Check the WebGL renderer.** A `SwiftShader` string or a missing WebGL context
+   is the one signal a stock detector still catches. Add `--ignore-gpu-blocklist`
+   and remove `--disable-gpu` if present.
+3. **Prefer `take_snapshot` + `click`/`fill` over `evaluate_script`.** Snapshots and
+   input events are invisible to page code; running script is not, even though
+   `start-mcp.js` strips the `pptr:` marker and install path from its stack traces.
+4. **Reuse a real `userDataDir`** with cookies and history.
+5. **`headless: false`** for sites that screen aggressively — headless leaks through
+   the UA and `screen` size no matter what flags you pass.
 
-Additional measures:
-- Use a real `userDataDir` with existing cookies/history (looks less like a fresh bot profile).
-- Set a realistic user agent via the Emulation tools.
-- Add random delays between actions (the agent naturally does this).
-- Use a residential proxy via `browser.proxy` config.
+Do not reach for `--disable-blink-features=AutomationControlled`: it does not change
+`navigator.webdriver` in this setup and costs ~52px of viewport.
 
 ## Handling Login-Gated Content
 

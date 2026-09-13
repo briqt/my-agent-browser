@@ -328,6 +328,66 @@ function localBrowserUrl(port) {
   return `http://127.0.0.1:${port}`;
 }
 
+// --- Stealth: keep automation traces out of page-visible stack traces ---
+
+// puppeteer tags every script it evaluates with `//# sourceURL=pptr:...`, and that
+// generated URL embeds the absolute path of the chrome-devtools-mcp install — which
+// on most machines contains the OS username. Any page-side getter, patched native or
+// wrapped console can read it back out of `new Error().stack` while our script runs.
+//
+// puppeteer skips its own tag when the script already carries a sourceURL comment
+// (see withSourcePuppeteerURLIfNone in puppeteer-core). We use that documented escape
+// hatch, matching its regex exactly so the two stay in sync.
+const SOURCE_URL_REGEX = /^[\x20\t]*\/\/[@#] sourceURL=\s{0,10}(\S*?)\s{0,10}$/m;
+
+const DEFAULT_STEALTH_SOURCE_URL = "eval.js";
+
+function stealthConfig(config) {
+  const s = (config && config.stealth) || {};
+  const enabled = s.evaluateScript !== false;
+  const raw = typeof s.sourceUrl === "string" ? s.sourceUrl.trim() : "";
+  // Whitespace would terminate the `//# sourceURL=` comment and corrupt the script,
+  // so anything that isn't a single clean token falls back to the default.
+  const sourceUrl = raw && !/\s/.test(raw) ? raw : DEFAULT_STEALTH_SOURCE_URL;
+  return { enabled, sourceUrl };
+}
+
+// Wrap a user function so it runs from a fresh timer stack instead of directly under
+// puppeteer's wrapper frame, and give it a benign sourceURL. A page-side trap then
+// sees only `at <sourceUrl>` — no `pptr:` frame and no filesystem path.
+//
+// Two details matter:
+//  - the newline before the closing paren, because chrome-devtools-mcp evaluates the
+//    text as `(${fn})` and a trailing line comment would otherwise swallow the paren;
+//  - the trailing newline after the sourceURL comment, for the same reason.
+function wrapStealthFunction(fnText, sourceUrl) {
+  return (
+    `(...__args) => new Promise((__resolve, __reject) => {\n` +
+    `  setTimeout(() => {\n` +
+    `    try { __resolve((${fnText}\n)(...__args)); } catch (__err) { __reject(__err); }\n` +
+    `  }, 0);\n` +
+    `})\n//# sourceURL=${sourceUrl}\n`
+  );
+}
+
+// Rewrite an outgoing JSON-RPC line before it reaches the MCP child. Any parse failure
+// or unexpected shape returns the line untouched — this must never drop a message.
+function rewriteClientLine(line, stealth) {
+  if (!stealth || !stealth.enabled) return line;
+  if (!line.includes("evaluate_script")) return line;
+  let msg;
+  try { msg = JSON.parse(line); } catch { return line; }
+  if (msg.method !== "tools/call") return line;
+  const params = msg.params;
+  if (!params || params.name !== "evaluate_script") return line;
+  const args = params.arguments;
+  if (!args || typeof args.function !== "string") return line;
+  // The caller supplied their own sourceURL — respect it and stay out of the way.
+  if (SOURCE_URL_REGEX.test(args.function)) return line;
+  args.function = wrapStealthFunction(args.function, stealth.sourceUrl);
+  try { return JSON.stringify(msg); } catch { return line; }
+}
+
 function buildNoProxyEnv() {
   // Node.js undici (globalThis.fetch) does NOT support shell wildcards (127.*)
   // or CIDR (127.0.0.0/8) in NO_PROXY. It only matches exact hostnames/IPs or
@@ -353,6 +413,30 @@ function startMcp(args, { pipe = false } = {}) {
   }
   const npx = process.platform === "win32" ? "npx.cmd" : "npx";
   return spawn(npx, ["-y", "chrome-devtools-mcp@^1.8.0", ...args], { stdio, env });
+}
+
+// Run the MCP child with its stdio proxied, so client→server lines pass through
+// rewriteClientLine. Used by the modes that don't need the lazy-start state machine.
+function startMcpProxied(args, config) {
+  const stealth = stealthConfig(config);
+  const child = startMcp(args, { pipe: true });
+  child.stdout.pipe(process.stdout);
+
+  let partial = "";
+  process.stdin.on("data", (chunk) => {
+    partial += chunk.toString();
+    const lines = partial.split("\n");
+    partial = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) { child.stdin.write("\n"); continue; }
+      child.stdin.write(rewriteClientLine(line, stealth) + "\n");
+    }
+  });
+  process.stdin.on("end", () => {
+    if (child.stdin.writable) child.stdin.end();
+  });
+
+  return child;
 }
 
 // --- Cleanup on exit ---
@@ -490,17 +574,26 @@ function startLazy(config, port) {
   const mcpArgs = buildMcpArgs(config, localBrowserUrl(port));
   let child = startMcp(mcpArgs, { pipe: true });
 
+  const stealth = stealthConfig(config);
+
   let state = "pending"; // "pending" → "launching" → "ready" | "failed"
-  let buffer = [];
+  let buffer = [];       // whole lines held back while Chrome is starting
   let partial = "";
   let relaunching = false;
   let launchError = null;
 
-  function flushAndPipe() {
+  // Every client→server line is funnelled through here rather than being piped raw,
+  // so evaluate_script rewriting stays active for the whole session instead of only
+  // until Chrome finishes starting.
+  function writeToChild(line) {
+    if (!line.trim()) { child.stdin.write("\n"); return; }
+    child.stdin.write(rewriteClientLine(line, stealth) + "\n");
+  }
+
+  function flushBuffer() {
     state = "ready";
-    for (const chunk of buffer) child.stdin.write(chunk);
-    buffer = null;
-    process.stdin.pipe(child.stdin);
+    for (const line of buffer) writeToChild(line);
+    buffer = [];
   }
 
   function sendMcpError(requestLine, errorMessage) {
@@ -520,7 +613,9 @@ function startLazy(config, port) {
     } catch {}
   }
 
-  async function onToolsCall(line) {
+  // The triggering tools/call is already sitting in `buffer`, so both the success and
+  // the failure path below cover it without needing the line passed in separately.
+  async function onToolsCall() {
     state = "launching";
     process.stderr.write(`[my-agent-browser] first tools/call detected, launching Chrome...\n`);
     try {
@@ -529,19 +624,14 @@ function startLazy(config, port) {
       launchError = err.message;
       state = "failed";
       process.stderr.write(`[my-agent-browser] Chrome launch failed: ${err.message}\n`);
-      sendMcpError(line, err.message);
-      for (const chunk of buffer) {
-        const lines = chunk.toString().split("\n");
-        for (const l of lines) {
-          if (!l.trim()) continue;
-          try { const m = JSON.parse(l); if (m.method === "tools/call") sendMcpError(l, err.message); } catch {}
-        }
+      for (const l of buffer) {
+        if (!l.trim()) continue;
+        try { const m = JSON.parse(l); if (m.method === "tools/call") sendMcpError(l, err.message); } catch {}
       }
-      buffer = null;
+      buffer = [];
       return;
     }
-    buffer.push(line + "\n");
-    flushAndPipe();
+    flushBuffer();
   }
 
   function rewriteAsCrash(line) {
@@ -620,9 +710,8 @@ function startLazy(config, port) {
       if (newStdoutPartial) { process.stdout.write(newStdoutPartial); newStdoutPartial = ""; }
     });
 
-    // Re-pipe stdin to new child
-    process.stdin.unpipe(child.stdin);
-    process.stdin.pipe(newChild.stdin);
+    // No stdin re-piping needed: writeToChild() always resolves `child` at call time,
+    // so reassigning it below is enough to redirect the stream.
 
     // Update the child reference and event handlers
     newChild.on("error", (err) => {
@@ -641,47 +730,38 @@ function startLazy(config, port) {
     process.stderr.write(`[my-agent-browser] MCP process restarted successfully\n`);
   }
 
-  process.stdin.on("data", (chunk) => {
-    if (state === "ready") return;
+  function handleLine(line) {
+    if (state === "ready") { writeToChild(line); return; }
 
     if (state === "failed") {
-      const text = chunk.toString();
-      const lines = text.split("\n");
-      for (const l of lines) {
-        if (!l.trim()) continue;
-        try {
-          const m = JSON.parse(l);
-          if (m.method === "tools/call") sendMcpError(l, launchError);
-        } catch {}
-      }
+      if (!line.trim()) return;
+      try {
+        const m = JSON.parse(line);
+        if (m.method === "tools/call") sendMcpError(line, launchError);
+      } catch {}
       return;
     }
 
-    if (state === "launching") {
-      buffer.push(chunk);
+    // Chrome is starting — hold everything so it replays in arrival order.
+    if (state === "launching") { buffer.push(line); return; }
+
+    // pending: forward handshake traffic, and let the first tools/call start Chrome
+    if (!line.trim()) { writeToChild(line); return; }
+    let msg;
+    try { msg = JSON.parse(line); } catch { writeToChild(line); return; }
+    if (msg.method === "tools/call") {
+      buffer.push(line);
+      onToolsCall();
       return;
     }
+    writeToChild(line);
+  }
 
+  process.stdin.on("data", (chunk) => {
     partial += chunk.toString();
     const lines = partial.split("\n");
     partial = lines.pop();
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (!line.trim()) { child.stdin.write("\n"); continue; }
-      let msg;
-      try { msg = JSON.parse(line); } catch { child.stdin.write(line + "\n"); continue; }
-
-      if (msg.method === "tools/call") {
-        if (partial) { buffer.push(partial); partial = ""; }
-        for (let j = i + 1; j < lines.length; j++) {
-          buffer.push(lines[j] + "\n");
-        }
-        onToolsCall(line);
-        return;
-      }
-      child.stdin.write(line + "\n");
-    }
+    for (const line of lines) handleLine(line);
   });
 
   process.stdin.on("end", () => {
@@ -798,7 +878,7 @@ async function main() {
   if (b.browserUrl) {
     process.stderr.write(`[my-agent-browser] direct mode: connecting to ${b.browserUrl}\n`);
     const args = buildMcpArgs(config, b.browserUrl);
-    const child = startMcp(args);
+    const child = startMcpProxied(args, config);
     child.on("error", (err) => {
       process.stderr.write(`[my-agent-browser] spawn error: ${err.message}\n`);
       process.exit(1);
@@ -827,7 +907,7 @@ async function main() {
   } else {
     await ensureChrome(config, port);
     const mcpArgs = buildMcpArgs(config, localBrowserUrl(port));
-    child = startMcp(mcpArgs);
+    child = startMcpProxied(mcpArgs, config);
   }
 
   child.on("error", (err) => {
@@ -851,4 +931,12 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildChromeArgs, buildMcpArgs, localBrowserUrl, expandHome };
+module.exports = {
+  buildChromeArgs,
+  buildMcpArgs,
+  localBrowserUrl,
+  expandHome,
+  stealthConfig,
+  wrapStealthFunction,
+  rewriteClientLine,
+};

@@ -66,16 +66,30 @@ before taking the snapshot.
 
 ### Anti-detection / bot detection
 
-If sites detect automation, add anti-detection flags to config:
-```json
-{
-  "browser": {
-    "extraArgs": [
-      "--disable-blink-features=AutomationControlled"
-    ]
-  }
-}
-```
+Check in this order — Chrome flags are rarely the cause:
+
+1. **Exit IP and request rate.** Route through `browser.proxy` and slow down.
+2. **WebGL renderer.** Run `evaluate_script` with
+   `() => { const gl = document.createElement('canvas').getContext('webgl'); const d = gl.getExtension('WEBGL_debug_renderer_info'); return gl.getParameter(d.UNMASKED_RENDERER_WEBGL); }`.
+   A `SwiftShader` string, or a `null` context, is a strong tell. Fix with
+   `--ignore-gpu-blocklist`, and drop `--disable-gpu` if you have it.
+3. **Headless.** `headless: false` for sites that screen aggressively.
+
+Full measurements and the flag-by-flag verdict: [anti-detection.md](anti-detection.md).
+
+Note that `--disable-blink-features=AutomationControlled` is **not** the fix it is
+usually claimed to be here: nothing in this skill sets `navigator.webdriver` in the
+first place, and the flag costs ~52px of viewport to Chrome's warning bar.
+
+### Chrome shows "You are using an unsupported command-line flag"
+
+Expected whenever `extraArgs` contains a flag on Chrome's internal bad-flags list —
+`--disable-blink-features` and `--no-sandbox` are the common ones. The flag still
+works; the bar is a disclaimer, not an error.
+
+It does cost about 52px of viewport height, so a `1366x768` window renders at
+`1366x629`. Remove the flag (see above — you probably do not need it), or add
+`--test-type` to suppress the bar. `--disable-infobars` has not worked for years.
 
 ### Large DOM pages cause memory overflow / browser crash
 

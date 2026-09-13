@@ -27,7 +27,8 @@
 ### 配置驱动 + 反爬支持
 
 - headless 模式、proxy 代理、viewport 尺寸、自定义启动参数——所有 Chrome 启动参数均可配置
-- 通过 `extraArgs` 传入任意 Chrome flags，可用于降低自动化检测风险（如 `--disable-blink-features=AutomationControlled`）
+- `evaluate_script` 的调用栈自动去除 `pptr:` 标记和 MCP 安装路径（该路径通常含系统用户名）——用站点自有脚本设陷阱实测验证，见 [anti-detection.md](skills/my-agent-browser/references/anti-detection.md)
+- 启动参数推荐基于单因素实测，而非以讹传讹
 - 直连已有 Chrome 实例（`browserUrl` 模式，适合已登录的长期会话）
 
 ### Agent 使用指导（SKILL.md）

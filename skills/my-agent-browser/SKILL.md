@@ -162,7 +162,7 @@ Option C: connect to existing session — set `browserUrl` in config.
 - Element not found after click → page changed, `take_snapshot { pageId }` again, find new UID
 - `wait_for` timeout → page didn't load expected content, `take_snapshot { pageId }` to see actual state
 - Chrome crashed / "target closed" → auto-relaunched by start-mcp.js, `list_pages` then navigate again with the new pageId
-- Anti-bot detection → add `--disable-blink-features=AutomationControlled` to `extraArgs` in config
+- Anti-bot detection → check the WebGL renderer and your exit IP first, not Chrome flags. See [references/anti-detection.md](references/anti-detection.md)
 
 ## Example: Login Flow
 
@@ -189,7 +189,7 @@ Option C: connect to existing session — set `browserUrl` in config.
 | Chrome not starting | Not installed or port in use | Check `which google-chrome`, check port conflict |
 | Snapshot empty/minimal | JS-rendered content not ready | `wait_for` before snapshot |
 | Memory overflow / crash | Heavy DOM | File-based snapshots (see above) |
-| Bot detection | Automation flags detected | Add anti-detection `extraArgs` in config |
+| Bot detection | Usually WebGL renderer or exit IP, rarely flags | See [references/anti-detection.md](references/anti-detection.md) |
 
 For detailed troubleshooting: [references/troubleshooting.md](references/troubleshooting.md)
 For network debugging workflows: [references/network-debugging.md](references/network-debugging.md)
