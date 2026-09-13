@@ -126,6 +126,15 @@ npx skills update my-agent-browser -g -y
 npm install -g chrome-devtools-mcp@^1.8.0
 ```
 
+从 v1.0.x 升级时，把配置迁移到 v1.1 的参数推荐（先看 diff，再 `--apply`）：
+
+```bash
+node ~/.claude/skills/my-agent-browser/scripts/migrate-config.js
+node ~/.claude/skills/my-agent-browser/scripts/migrate-config.js --apply
+```
+
+脚本会先备份配置，移除三个实测得不偿失的 flag，并开启调用栈隐藏。改完需重启 agent 会话。
+
 ## 社区
 
 分享于 [LINUX DO](https://linux.do/t/topic/2451355)

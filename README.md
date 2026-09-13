@@ -126,6 +126,7 @@ The bundled SKILL.md provides workflow guidance so agents avoid common pitfalls:
 │   ├── SKILL.md                 # Agent workflow guide
 │   ├── scripts/
 │   │   ├── start-mcp.js        # MCP server wrapper
+│   │   ├── migrate-config.js   # v1.0 → v1.1 config migration
 │   │   ├── start-mcp.test.js   # Unit tests (node --test)
 │   │   └── stealth-e2e.js      # End-to-end stack-trace leak check
 │   ├── config.example.json      # Config template
@@ -149,6 +150,17 @@ The bundled SKILL.md provides workflow guidance so agents avoid common pitfalls:
 npx skills update my-agent-browser -g -y
 npm install -g chrome-devtools-mcp@^1.8.0
 ```
+
+Upgrading from v1.0.x, migrate your config to the v1.1 flag recommendations
+(dry run first, then `--apply`):
+
+```bash
+node ~/.claude/skills/my-agent-browser/scripts/migrate-config.js
+node ~/.claude/skills/my-agent-browser/scripts/migrate-config.js --apply
+```
+
+It backs the file up, drops the three flags measured to hurt more than they help,
+and enables stack-trace hiding. Restart your agent session afterwards.
 
 ## Community
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.1.1
+
+### Added
+
+- `scripts/migrate-config.js` — migrates a v1.0.x config to the v1.1
+  recommendations. Dry run by default, `--apply` writes it after taking a backup,
+  and it is idempotent. Deliberate swiftshader fallbacks are preserved; when it
+  removes `--disable-gpu` without one present it prints the WebGL check to run.
+
 ## v1.1.0
 
 ### Added
