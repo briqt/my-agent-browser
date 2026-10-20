@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Google Chrome, Chromium, or Microsoft Edge installed
-- Node.js 20+ (for npm and the MCP wrapper script)
+- Node.js 20.19+ on the 20.x line, 22.12+ on the 22.x line, or 23+ (Node 24 LTS recommended)
 
 ## Path Convention
 
@@ -29,7 +29,7 @@ This installs the skill (SKILL.md, scripts, references) to `<skill-dir>`.
 ### Step 2: Install the runtime dependency
 
 ```bash
-npm install -g chrome-devtools-mcp@^1.8.0
+npm install -g chrome-devtools-mcp@1.11.0
 ```
 
 ### Step 3: Create your personal config
@@ -212,7 +212,7 @@ Note: Chrome locks user-data-dir, so you can't use the same profile simultaneous
 
 Both arrays are passed straight through to `chrome-devtools-mcp` (merged in order).
 There is no functional difference between them — the split is cosmetic, pick either.
-The authoritative flag list is always `npx chrome-devtools-mcp@latest --help`.
+The authoritative flag list is always `npx chrome-devtools-mcp@1.11.0 --help`.
 
 **You usually need nothing here.** Out of the box, chrome-devtools-mcp already
 exposes the full tool set: navigation, snapshots, interaction, **plus network,
@@ -244,7 +244,7 @@ Use `mcp.flags` only to **shrink** or **extend** that default:
 | Flag | Effect |
 |------|--------|
 | `--memoryDebugging` (alias `--experimentalMemory`) | Heap-snapshot analysis (`get_heapsnapshot_dominators`, `get_heapsnapshot_retaining_paths`, `compare_heapsnapshots`, …) |
-| `--categoryExtensions` | Chrome extension tools (pipe connection only) |
+| `--categoryExtensions` | Chrome extension tools (pipe or existing CDP connection) |
 | `--experimentalVision` | Coordinate-based `click_at(x, y)` (needs a vision / computer-use model) |
 | `--experimentalScreencast` | Screencast recording (requires ffmpeg on PATH) |
 | `--allowUnrestrictedPaths` | Allow file-writing tools outside the OS temp dir when the MCP client has no roots |
@@ -288,7 +288,7 @@ When `browserUrl` is set, chrome-devtools-mcp connects to the existing instance 
 
 ```bash
 npx skills update my-agent-browser -g
-npm install -g chrome-devtools-mcp@latest
+npm install -g chrome-devtools-mcp@1.11.0
 ```
 
 ## Uninstalling
@@ -298,3 +298,6 @@ npx skills remove my-agent-browser -g
 npm uninstall -g chrome-devtools-mcp
 rm -rf ~/.config/agent-skills/my-agent-browser
 ```
+
+For MCP 1.11 filesystem roots, script/file formats, and built-in recording changes,
+see [dependency-upgrades.md](dependency-upgrades.md).

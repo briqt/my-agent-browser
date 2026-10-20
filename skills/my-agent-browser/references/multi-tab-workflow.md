@@ -93,7 +93,7 @@ take_snapshot { pageId: 1 }
 list_pages → listingId (e.g. 1)
 take_snapshot { pageId: 1 }
 
-evaluate_script { pageId: 1, function: "document.querySelector('a.target-link').href" }
+evaluate_script { pageId: 1, function: "() => (document.querySelector('a.target-link').href)" }
 
 new_page { url: "<the href value>" }
 → detailId (e.g. 2)

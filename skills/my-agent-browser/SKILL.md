@@ -14,13 +14,22 @@ description: >
 
 Browser automation for AI agents via `chrome-devtools-mcp` MCP server.
 
+Release **1.2.0**, tested with **chrome-devtools-mcp 1.11.0**. Node 24 LTS is recommended. Check the installed wrapper without launching Chrome:
+
+```bash
+node <skill-dir>/scripts/start-mcp.js --doctor --json
+```
+
+The report identifies the wrapper, Node, Chrome, MCP binary and config paths. If the
+wrapper and installed skill differ, reinstall this skill before troubleshooting the browser.
+
 ## Setup Check
 
 `<skill-dir>` refers to the directory containing this SKILL.md (typically `~/.agents/skills/my-agent-browser/` or `~/.claude/skills/my-agent-browser/` depending on your agent).
 
 If browser MCP tools (`navigate_page`, `take_snapshot`, `click`, `fill`) are not available in your tool list:
 
-1. Install: `npm install -g chrome-devtools-mcp@^1.8.0`
+1. Install: `npm install -g chrome-devtools-mcp@1.11.0`
 2. Create config:
    ```bash
    mkdir -p ~/.config/agent-skills/my-agent-browser
@@ -96,7 +105,7 @@ These tool groups are **available by default** — no flags needed. See [referen
 - **Console**: `list_console_messages` / `get_console_message` — browser console
 - **Emulation**: `emulate` — throttle network/CPU, geolocation, color scheme
 
-`mcp.flags` in config is a passthrough to chrome-devtools-mcp. Use it to **shrink** the tool set (`--no-categoryNetwork` / `--no-categoryPerformance` / `--no-categoryEmulation`, or `--slim` for 3 tools) or to **add opt-in** groups (`--memoryDebugging` / `--experimentalMemory` for heap-snapshot analysis, `--categoryExtensions`, `--experimentalVision` for coordinate `click_at`). Authoritative flag list: `npx chrome-devtools-mcp@latest --help`.
+`mcp.flags` in config is a passthrough to chrome-devtools-mcp. Use it to **shrink** the tool set (`--no-categoryNetwork` / `--no-categoryPerformance` / `--no-categoryEmulation`, or `--slim` for 3 tools) or to **add opt-in** groups (`--memoryDebugging` / `--experimentalMemory` for heap-snapshot analysis, `--categoryExtensions`, `--experimentalVision` for coordinate `click_at`). Authoritative flag list: `npx chrome-devtools-mcp@1.11.0 --help`.
 
 ## Key Rules
 
@@ -161,7 +170,8 @@ Option C: connect to existing session — set `browserUrl` in config.
 
 - Element not found after click → page changed, `take_snapshot { pageId }` again, find new UID
 - `wait_for` timeout → page didn't load expected content, `take_snapshot { pageId }` to see actual state
-- Chrome crashed / "target closed" → auto-relaunched by start-mcp.js, `list_pages` then navigate again with the new pageId
+- MCP stale state → the wrapper replaces and initializes its MCP child. In-flight calls fail explicitly and are never replayed. After recovery, `list_pages` and take a fresh snapshot; verify the result before retrying an action that changes state.
+- Chrome crashed / "target closed" → in managed lazy mode Chrome is relaunched; `list_pages` then navigate again with the new pageId
 - Anti-bot detection → check the WebGL renderer and your exit IP first, not Chrome flags. See [references/anti-detection.md](references/anti-detection.md)
 
 ## Example: Login Flow
@@ -171,9 +181,9 @@ Option C: connect to existing session — set `browserUrl` in config.
 2. navigate_page { pageId, url: "https://app.example.com/login" }  — skip if new_page already loaded it
 3. take_snapshot { pageId }
    → uid=1_7 textbox "Email", uid=1_9 textbox "Password", uid=1_12 button "Sign in"
-4. fill { pageId, uid: "1_7", value: "user@example.com" }
-5. fill { pageId, uid: "1_9", value: "secret123" }
-6. click { pageId, uid: "1_12" }
+4. fill_form { pageId, elements: [{uid: "1_7", value: "user@example.com"}, {uid: "1_9", value: "secret123"}] }
+5. take_snapshot { pageId } → find the current Sign in button, e.g. uid=2_12
+6. click { pageId, uid: "2_12" }
 7. wait_for { pageId, text: ["Dashboard"] }
 8. take_snapshot { pageId } → now on dashboard, new uids
 ```
@@ -198,3 +208,18 @@ For advanced scraping patterns: [references/scraping-patterns.md](references/scr
 ## Domain-Specific Workflows
 
 - **Academic paper download** (CNKI, Google Scholar, MDPI): [references/domain/academic-paper-download.md](references/domain/academic-paper-download.md)
+
+### Navigation and script recovery
+
+- Refresh or navigate with `navigate_page { pageId, type: "reload" }` / `{ pageId, url }`.
+  A script that calls `location.reload()` and then awaits work can lose its execution
+  context; perform the navigation and subsequent inspection as separate calls.
+- `evaluate_script.function` is a JavaScript **function**, e.g. `"() => document.title"`.
+  Do not pass a bare expression or TypeScript syntax such as `(window as any)`.
+- `No page found` means rediscover IDs with `list_pages`; do not repeatedly retry the old ID.
+- For HTTP extraction, read `status` and the response text before parsing JSON. Empty
+  responses and HTML error pages need separate handling; a JSON parse error alone
+  does not establish that a requested change failed.
+
+When upgrading browser dependencies, read [dependency-upgrades.md](references/dependency-upgrades.md)
+for the tested version, runtime requirements and changed file/tool behavior.

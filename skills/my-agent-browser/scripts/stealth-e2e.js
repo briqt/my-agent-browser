@@ -131,6 +131,24 @@ async function runOnce({ stealthEnabled, trapUrl, lazyStart = true }) {
       arguments: { pageId, function: "() => JSON.stringify(window.__log)" },
     });
 
+    // MCP 1.11 has classic-script and local-file modes. Neither may be rewritten
+    // into a callable function or bypass the upstream filesystem checks.
+    const classic = await rpc.request("tools/call", {
+      name: "evaluate_script",
+      arguments: { pageId, format: "script", function: "window.__modeCheck = 41; window.__modeCheck + 1" },
+    });
+    if (classic.error || classic.result?.isError || !textOf(classic).includes("42")) {
+      throw new Error("classic-script mode failed: " + textOf(classic));
+    }
+    const sourcePath = path.join(home, "source.js");
+    fs.writeFileSync(sourcePath, "() => 43");
+    const fileSource = await rpc.request("tools/call", {
+      name: "evaluate_script", arguments: { pageId, sourcePath, format: "function" },
+    });
+    if (fileSource.error || fileSource.result?.isError || !textOf(fileSource).includes("43")) {
+      throw new Error("local-file source mode failed: " + textOf(fileSource));
+    }
+    console.log("✔ MCP 1.11 classic-script and file-source modes");
     return textOf(dump);
   } finally {
     try { child.kill("SIGTERM"); } catch {}

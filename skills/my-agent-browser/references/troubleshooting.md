@@ -31,7 +31,7 @@ Possible causes:
 - Element is inside an iframe (not captured by default)
 - Element is dynamically loaded (use `wait_for` first)
 
-Try `evaluate_script { pageId, function: "document.querySelector('selector').textContent" }` to verify the element exists.
+Try `evaluate_script { pageId, function: "() => (document.querySelector('selector').textContent)" }` to verify the element exists.
 
 ### Timeout on `wait_for`
 
@@ -53,14 +53,14 @@ Check:
 
 The `start-mcp.js` wrapper couldn't launch chrome-devtools-mcp. Check:
 1. Is `chrome-devtools-mcp` installed? (`chrome-devtools-mcp --version`)
-2. If not: `npm install -g chrome-devtools-mcp@latest`
+2. If not: `npm install -g chrome-devtools-mcp@1.11.0`
 3. Is Node.js 20+ available? (`node --version`)
 
 ### Page loads but snapshot is empty or minimal
 
 Some pages render content via JavaScript after initial load. Use:
 ```
-wait_for { text: ["expected content"] }
+wait_for { pageId, text: ["expected content"] }
 ```
 before taking the snapshot.
 

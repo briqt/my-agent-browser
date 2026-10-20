@@ -43,7 +43,7 @@
 
 ```bash
 npx skills add briqt/my-agent-browser -g -y
-npm install -g chrome-devtools-mcp@^1.8.0
+npm install -g chrome-devtools-mcp@1.11.0
 mkdir -p ~/.config/agent-skills/my-agent-browser
 cp ~/.agents/skills/my-agent-browser/config.example.json ~/.config/agent-skills/my-agent-browser/config.json
 ```
@@ -123,7 +123,7 @@ Chrome（多 session 共享实例）
 
 ```bash
 npx skills update my-agent-browser -g -y
-npm install -g chrome-devtools-mcp@^1.8.0
+npm install -g chrome-devtools-mcp@1.11.0
 ```
 
 从 v1.0.x 升级时，把配置迁移到 v1.1 的参数推荐（先看 diff，再 `--apply`）：

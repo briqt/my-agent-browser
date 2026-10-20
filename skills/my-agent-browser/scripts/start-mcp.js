@@ -7,6 +7,9 @@ const os = require("os");
 const http = require("http");
 const { execFileSync, spawn } = require("child_process");
 
+const { McpSession } = require("./mcp-session.js");
+const VERSION = "1.2.0";
+const MCP_VERSION = "1.11.0";
 const SKILL_NAME = "my-agent-browser";
 const configDir =
   process.env.MY_AGENT_BROWSER_HOME ||
@@ -316,6 +319,25 @@ function findMcpBin() {
   return null;
 }
 
+function findMcpVersion(binary) {
+  if (!binary) return null;
+  try {
+    let current = path.dirname(fs.realpathSync(binary));
+    for (let i = 0; i < 8; i++) {
+      const manifest = path.join(current, "package.json");
+      if (fs.existsSync(manifest)) {
+        const data = JSON.parse(fs.readFileSync(manifest, "utf8"));
+        if (data.name === "chrome-devtools-mcp") return data.version;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  } catch {}
+  return null;
+}
+
+
 function buildMcpArgs(config, browserUrl) {
   const m = config.mcp || {};
   const args = [`--browserUrl=${browserUrl}`];
@@ -378,6 +400,9 @@ function rewriteClientLine(line, stealth) {
   let msg;
   try { msg = JSON.parse(line); } catch { return line; }
   if (msg.method !== "tools/call") return line;
+  // MCP 1.11 script mode uses classic-script semantics, not a callable function.
+  // File sources stay with upstream so its negotiated workspace checks are preserved.
+  if (msg.params?.arguments?.format === "script" || msg.params?.arguments?.sourcePath !== undefined) return line;
   const params = msg.params;
   if (!params || params.name !== "evaluate_script") return line;
   const args = params.arguments;
@@ -412,31 +437,31 @@ function startMcp(args, { pipe = false } = {}) {
     return spawn(bin, args, { stdio, env });
   }
   const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-  return spawn(npx, ["-y", "chrome-devtools-mcp@^1.8.0", ...args], { stdio, env });
+  return spawn(npx, ["-y", `chrome-devtools-mcp@${MCP_VERSION}`, ...args], { stdio, env });
 }
 
 // Run the MCP child with its stdio proxied, so client→server lines pass through
 // rewriteClientLine. Used by the modes that don't need the lazy-start state machine.
+function createMcpSession(args, config, shouldRecover = responseHasStaleStateError) {
+  return new McpSession({
+    spawnChild: () => startMcp(args, { pipe: true }),
+    rewriteLine: line => rewriteClientLine(line, stealthConfig(config)),
+    shouldRecover,
+    log: message => process.stderr.write(`[my-agent-browser] ${message}\n`),
+  });
+}
+
 function startMcpProxied(args, config) {
-  const stealth = stealthConfig(config);
-  const child = startMcp(args, { pipe: true });
-  child.stdout.pipe(process.stdout);
-
+  const session = createMcpSession(args, config);
+  session.on("line", line => process.stdout.write(line + "\n"));
   let partial = "";
-  process.stdin.on("data", (chunk) => {
+  process.stdin.on("data", chunk => {
     partial += chunk.toString();
-    const lines = partial.split("\n");
-    partial = lines.pop();
-    for (const line of lines) {
-      if (!line.trim()) { child.stdin.write("\n"); continue; }
-      child.stdin.write(rewriteClientLine(line, stealth) + "\n");
-    }
+    const lines = partial.split("\n"); partial = lines.pop();
+    for (const line of lines) session.write(line);
   });
-  process.stdin.on("end", () => {
-    if (child.stdin.writable) child.stdin.end();
-  });
-
-  return child;
+  process.stdin.on("end", () => session.end());
+  return session;
 }
 
 // --- Cleanup on exit ---
@@ -571,252 +596,72 @@ function responseHasStaleStateError(line) {
 // --- Lazy start: stdin proxy with on-demand Chrome launch ---
 
 function startLazy(config, port) {
-  const mcpArgs = buildMcpArgs(config, localBrowserUrl(port));
-  let child = startMcp(mcpArgs, { pipe: true });
-
-  const stealth = stealthConfig(config);
-
-  let state = "pending"; // "pending" → "launching" → "ready" | "failed"
-  let buffer = [];       // whole lines held back while Chrome is starting
+  let state = "pending";
+  let buffer = [];
   let partial = "";
   let relaunching = false;
   let launchError = null;
+  const session = createMcpSession(buildMcpArgs(config, localBrowserUrl(port)), config,
+    line => state === "ready" && responseHasStaleStateError(line));
 
-  // Every client→server line is funnelled through here rather than being piped raw,
-  // so evaluate_script rewriting stays active for the whole session instead of only
-  // until Chrome finishes starting.
-  function writeToChild(line) {
-    if (!line.trim()) { child.stdin.write("\n"); return; }
-    child.stdin.write(rewriteClientLine(line, stealth) + "\n");
+  function sendMcpError(line, message) {
+    try { session.fail(JSON.parse(line), message); } catch {}
   }
 
-  function flushBuffer() {
-    state = "ready";
-    for (const line of buffer) writeToChild(line);
-    buffer = [];
-  }
-
-  function sendMcpError(requestLine, errorMessage) {
-    try {
-      const msg = JSON.parse(requestLine);
-      if (msg.id != null) {
-        const response = {
-          jsonrpc: "2.0",
-          id: msg.id,
-          result: {
-            content: [{ type: "text", text: `[my-agent-browser] ${errorMessage}` }],
-            isError: true,
-          },
-        };
-        process.stdout.write(JSON.stringify(response) + "\n");
-      }
-    } catch {}
-  }
-
-  // The triggering tools/call is already sitting in `buffer`, so both the success and
-  // the failure path below cover it without needing the line passed in separately.
-  async function onToolsCall() {
+  async function launch() {
     state = "launching";
-    process.stderr.write(`[my-agent-browser] first tools/call detected, launching Chrome...\n`);
     try {
       await ensureChrome(config, port);
-    } catch (err) {
-      launchError = err.message;
+      state = "ready";
+      for (const line of buffer.splice(0)) session.write(line);
+    } catch (error) {
+      launchError = error.message;
       state = "failed";
-      process.stderr.write(`[my-agent-browser] Chrome launch failed: ${err.message}\n`);
-      for (const l of buffer) {
-        if (!l.trim()) continue;
-        try { const m = JSON.parse(l); if (m.method === "tools/call") sendMcpError(l, err.message); } catch {}
-      }
-      buffer = [];
-      return;
-    }
-    flushBuffer();
-  }
-
-  function rewriteAsCrash(line) {
-    try {
-      const msg = JSON.parse(line);
-      const rewritten = {
-        ...msg,
-        result: {
-          content: [{ type: "text", text: "Chrome was closed or crashed. All open pages and browser state are lost. Chrome is being relaunched automatically — please navigate to your target URL again." }],
-          isError: true,
-        },
-      };
-      if (msg.error) delete rewritten.error;
-      process.stdout.write(JSON.stringify(rewritten) + "\n");
-    } catch {
-      process.stdout.write(line + "\n");
+      for (const line of buffer.splice(0)) sendMcpError(line, launchError);
     }
   }
 
-  // Silently relaunch Chrome when a connection error is detected
   async function relaunchChrome() {
     if (relaunching) return;
     relaunching = true;
-    process.stderr.write(`[my-agent-browser] Chrome connection lost, relaunching...\n`);
-    try {
-      deleteLock();
-      await ensureChrome(config, port);
-      process.stderr.write(`[my-agent-browser] Chrome relaunched, next tool call will reconnect\n`);
-    } catch (err) {
-      process.stderr.write(`[my-agent-browser] Chrome relaunch failed: ${err.message}\n`);
-    }
-    relaunching = false;
-  }
-
-  // Restart the MCP child process when it has stale internal state.
-  // Chrome is fine — only the MCP process needs to reconnect and rebuild context.
-  let restarting = false;
-  function restartMcpChild() {
-    if (restarting) return;
-    restarting = true;
-    process.stderr.write(`[my-agent-browser] MCP process has stale state, restarting...\n`);
-
-    // Kill the old child
-    try { child.kill("SIGTERM"); } catch {}
-
-    // Spawn a new MCP child with the same args
-    const newChild = startMcp(mcpArgs, { pipe: true });
-
-    // Re-wire stdout proxy on the new child
-    let newStdoutPartial = "";
-    newChild.stdout.on("data", (chunk) => {
-      newStdoutPartial += chunk.toString();
-      const lines = newStdoutPartial.split("\n");
-      newStdoutPartial = lines.pop();
-      for (const line of lines) {
-        if (responseHasChromeError(line)) {
-          probePort(port, 1500).then((alive) => {
-            if (!alive) {
-              relaunchChrome();
-              rewriteAsCrash(line);
-            } else {
-              process.stdout.write(line + "\n");
-            }
-          });
-          continue;
-        }
-        if (responseHasStaleStateError(line)) {
-          process.stderr.write(`[my-agent-browser] stale state error persists after restart, passing through\n`);
-          process.stdout.write(line + "\n");
-          continue;
-        }
-        process.stdout.write(line + "\n");
-      }
-    });
-    newChild.stdout.on("end", () => {
-      if (newStdoutPartial) { process.stdout.write(newStdoutPartial); newStdoutPartial = ""; }
-    });
-
-    // No stdin re-piping needed: writeToChild() always resolves `child` at call time,
-    // so reassigning it below is enough to redirect the stream.
-
-    // Update the child reference and event handlers
-    newChild.on("error", (err) => {
-      process.stderr.write(`[my-agent-browser] spawn error: ${err.message}\n`);
-      cleanup();
-      process.exit(1);
-    });
-    newChild.on("exit", (code) => {
-      cleanup();
-      process.exit(code ?? 1);
-    });
-
-    // Replace the outer child reference (used by cleanup and event handlers)
-    child = newChild;
-    restarting = false;
-    process.stderr.write(`[my-agent-browser] MCP process restarted successfully\n`);
+    try { deleteLock(); await ensureChrome(config, port); }
+    catch (error) { process.stderr.write(`[my-agent-browser] Chrome relaunch failed: ${error.message}\n`); }
+    finally { relaunching = false; }
   }
 
   function handleLine(line) {
-    if (state === "ready") { writeToChild(line); return; }
-
-    if (state === "failed") {
-      if (!line.trim()) return;
-      try {
-        const m = JSON.parse(line);
-        if (m.method === "tools/call") sendMcpError(line, launchError);
-      } catch {}
-      return;
-    }
-
-    // Chrome is starting — hold everything so it replays in arrival order.
+    if (state === "ready") { session.write(line); return; }
+    if (state === "failed") { sendMcpError(line, launchError); return; }
     if (state === "launching") { buffer.push(line); return; }
-
-    // pending: forward handshake traffic, and let the first tools/call start Chrome
-    if (!line.trim()) { writeToChild(line); return; }
-    let msg;
-    try { msg = JSON.parse(line); } catch { writeToChild(line); return; }
-    if (msg.method === "tools/call") {
-      buffer.push(line);
-      onToolsCall();
-      return;
-    }
-    writeToChild(line);
+    let request;
+    try { request = JSON.parse(line); } catch { session.write(line); return; }
+    if (request.method === "tools/call") { buffer.push(line); launch(); }
+    else session.write(line);
   }
 
-  process.stdin.on("data", (chunk) => {
+  process.stdin.on("data", chunk => {
     partial += chunk.toString();
-    const lines = partial.split("\n");
-    partial = lines.pop();
+    const lines = partial.split("\n"); partial = lines.pop();
     for (const line of lines) handleLine(line);
   });
-
   process.stdin.on("end", () => {
-    if (child.stdin.writable) child.stdin.end();
-    process.stderr.write(`[my-agent-browser] stdin closed (parent gone), exiting.\n`);
-    cleanup();
-    setTimeout(() => process.exit(0), 500);
+    session.end(); cleanup(); setTimeout(() => process.exit(0), 500);
   });
-
-  // stdout proxy: relay lines, detect Chrome process death, auto-recover
-  let stdoutPartial = "";
-  child.stdout.on("data", (chunk) => {
-    stdoutPartial += chunk.toString();
-    const lines = stdoutPartial.split("\n");
-    stdoutPartial = lines.pop();
-    for (const line of lines) {
-      if (state === "ready" && responseHasChromeError(line)) {
-        // Only act if Chrome is actually unreachable — don't trust error text alone
-        probePort(port, 1500).then((alive) => {
-          if (!alive) {
-            relaunchChrome();
-            rewriteAsCrash(line);
-          } else {
-            // Chrome is alive — pass the original error through untouched
-            process.stdout.write(line + "\n");
-          }
-        });
-        continue;
-      }
-      if (state === "ready" && responseHasStaleStateError(line)) {
-        restartMcpChild();
+  session.on("line", line => {
+    if (state === "ready" && responseHasChromeError(line)) {
+      probePort(port, 1500).then(alive => {
+        if (alive) { process.stdout.write(line + "\n"); return; }
+        relaunchChrome();
         try {
-          const msg = JSON.parse(line);
-          const rewritten = {
-            ...msg,
-            result: {
-              content: [{ type: "text", text: "The browser session had stale state and has been automatically recovered. Please retry your last action." }],
-              isError: true,
-            },
-          };
-          if (msg.error) delete rewritten.error;
-          process.stdout.write(JSON.stringify(rewritten) + "\n");
-        } catch {
-          process.stdout.write(line + "\n");
-        }
-        continue;
-      }
-      process.stdout.write(line + "\n");
-    }
+          const message = JSON.parse(line);
+          delete message.error;
+          message.result = { isError: true, content: [{ type: "text", text: "Chrome was closed or crashed and is being relaunched. Refresh page IDs, navigate again, and verify any previous mutation before retrying." }] };
+          process.stdout.write(JSON.stringify(message) + "\n");
+        } catch { process.stdout.write(line + "\n"); }
+      });
+    } else process.stdout.write(line + "\n");
   });
-  child.stdout.on("end", () => {
-    if (stdoutPartial) { process.stdout.write(stdoutPartial); stdoutPartial = ""; }
-  });
-
-  return child;
+  return session;
 }
 
 // --- Parent heartbeat (detect orphaned state) ---
@@ -866,9 +711,28 @@ function cleanupOrphanProcesses(port) {
   } catch {}
 }
 
+function printDoctor() {
+  const report = { version: VERSION, node: process.version, nodePath: process.execPath,
+    scriptPath: __filename, configPath: configFile, configExists: fs.existsSync(configFile),
+    chromePath: findChrome(), mcpPath: findMcpBin(), expectedMcpVersion: MCP_VERSION, capabilities: ["pageId-routing", "mcp-reinitialize", "no-tool-replay", "stealth-evaluate"] };
+  report.mcpVersion = findMcpVersion(report.mcpPath);
+  report.mcpMatchesTestedVersion = report.mcpVersion === MCP_VERSION;
+  try {
+    const dev = path.resolve(__dirname, "..", ".config.json");
+    const actual = fs.existsSync(dev) ? dev : configFile;
+    report.configPath = actual;
+    report.configExists = fs.existsSync(actual);
+    const cfg = report.configExists ? JSON.parse(fs.readFileSync(actual, "utf8")) : {};
+    report.mode = cfg.browser?.browserUrl ? "direct" : cfg.browser?.lazyStart === false ? "eager" : "lazy";
+  } catch (error) { report.configError = error.message; process.exitCode = 1; }
+  console.log(JSON.stringify(report, null, process.argv.includes("--json") ? undefined : 2));
+}
+
 // --- Main ---
 
 async function main() {
+  if (process.argv.includes("--version")) { console.log(VERSION); return; }
+  if (process.argv.includes("--doctor")) { printDoctor(); return; }
   const config = loadConfig();
   const b = config.browser || {};
   const port = b.debuggingPort || DEFAULT_PORT;

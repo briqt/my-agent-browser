@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.0
+
+- Upgrade and pin chrome-devtools-mcp 1.11.0; report actual/tested MCP versions in doctor and document the new file/workspace and recording behavior.
+
+- Keep the client transport alive while retiring a stale MCP child, replay the initialize handshake, and wait for readiness before new calls.
+- Fail in-flight calls explicitly without replaying mutations; bound replacement initialization time.
+- Add offline `--doctor --json` and `--version` diagnostics.
+- Correct function-valued JavaScript examples, pageId omissions and login snapshot ordering.
+- Add recovery, UTF-8 transport and executable documentation regression checks.
+
 ## v1.1.1
 
 ### Added

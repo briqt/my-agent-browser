@@ -148,3 +148,14 @@ test("buildChromeArgs no longer ships fingerprint-damaging defaults", () => {
     assert.ok(!args.includes(bad), `${bad} should not be a built-in default`);
   }
 });
+
+
+test("MCP 1.11 classic scripts and file sources retain upstream semantics and checks", () => {
+  for (const argumentsValue of [
+    { pageId: 1, function: "window.counter = 1; window.counter", format: "script" },
+    { pageId: 1, sourcePath: "/tmp/example.js", format: "function" },
+  ]) {
+    const line = JSON.stringify({ jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "evaluate_script", arguments: argumentsValue } });
+    assert.strictEqual(rewriteClientLine(line, stealthConfig({})), line);
+  }
+});
