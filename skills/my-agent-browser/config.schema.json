@@ -61,6 +61,11 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "传递给 chrome-devtools-mcp 的额外 CLI 参数"
+        },
+        "backgroundNewPages": {
+          "type": "boolean",
+          "description": "Wrapper 可选增强（不是上游 CLI 参数）：仅设为 true 时，为未提供 background 的 new_page 调用补 background: true。缺省或 false 保留上游行为；显式 background 参数始终优先。独立于 stealth，支持 lazy/eager/direct 模式；不控制首次浏览器启动、网页弹窗或显式置前。修改后需重启 MCP 会话。",
+          "default": false
         }
       }
     },

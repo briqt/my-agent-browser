@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.3.0
+
+### Added
+
+- Optional `mcp.backgroundNewPages` wrapper policy, disabled by default. When set
+  to `true`, `new_page` calls without a `background` argument get `background: true`.
+  Explicit arguments always win; missing/false config preserves upstream behavior.
+- Apply the policy independently of script rewriting across lazy, eager and direct
+  connection modes, including requests queued during MCP recovery. No tool calls
+  are replayed and no upstream dependency changes are needed.
+- Regression tests for opt-in defaults, explicit/invalid arguments, message
+  passthrough, script-rewrite independence, recovery and config/schema defaults.
+  The headless browser e2e now also exercises the policy enabled in lazy/eager
+  modes, with script rewriting disabled/enabled respectively.
+
+### Documentation
+
+- Document opt-in configuration and single-call foreground overrides. Clarify that
+  initial GUI launch, site-created popups and explicit bring-to-front operations
+  are outside this policy; `select_page` only brings a page forward when requested.
+
 ## v1.2.0
 
 - Upgrade and pin chrome-devtools-mcp 1.11.0; report actual/tested MCP versions in doctor and document the new file/workspace and recording behavior.

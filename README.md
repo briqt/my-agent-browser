@@ -30,6 +30,7 @@ Production-ready wrapper around [chrome-devtools-mcp](https://github.com/ChromeD
 - `evaluate_script` stack traces are stripped of the `pptr:` marker and the MCP install path (which normally leaks your OS username) — measured against a site-origin trap, see [anti-detection.md](skills/my-agent-browser/references/anti-detection.md)
 - Flag recommendations backed by one-flag-at-a-time measurements rather than folklore
 - Direct connection to existing Chrome (`browserUrl` mode, for pre-authenticated long-lived sessions)
+- Opt-in background tabs via `mcp.backgroundNewPages` (default `false`), preserving explicit per-call choices
 
 ### Agent Workflow Guidance (SKILL.md)
 
@@ -107,7 +108,37 @@ Chrome (shared across sessions)
 - Chrome runs as a detached process, shared by multiple MCP sessions
 - `browser.lock` tracks active client count; last client to exit kills Chrome
 - All browser settings live in `~/.config/agent-skills/my-agent-browser/config.json`
-- Config changes take effect on next agent session
+- Restart the MCP session after config changes
+
+## Background new tabs (v1.3.0)
+
+The MCP dependency remains **chrome-devtools-mcp 1.11.0**. In
+`~/.config/agent-skills/my-agent-browser/config.json`, the default is:
+
+```json
+{ "mcp": { "backgroundNewPages": false } }
+```
+
+To opt in, set:
+
+```json
+{ "mcp": { "backgroundNewPages": true } }
+```
+
+Merge this field into your existing config, then restart the MCP session.
+`mcp.backgroundNewPages` is a wrapper boolean, not an upstream CLI flag; do not
+put it in `mcp.flags`. Omitted or `false` leaves upstream `new_page` behavior
+entirely unchanged. Only strict boolean `true` adds `background: true` when a
+`new_page` call omits `background`; explicit `background: true` or `false` is
+always respected. This works in lazy, eager and direct (`browserUrl`) modes,
+independently of stealth settings.
+
+This is not a global focus guarantee: it does not cover Chrome's first GUI
+launch, website `window.open` popups, or `select_page { pageId, bringToFront: true }`.
+Only `bringToFront: true` actively brings a selected tab to front; logical
+selection is not OS foreground focus. Pass `pageId` directly on page-scoped
+calls—no preceding `select_page` is needed. See [setup](skills/my-agent-browser/references/setup.md)
+and [multi-tab workflow](skills/my-agent-browser/references/multi-tab-workflow.md).
 
 ## What the SKILL.md teaches agents
 

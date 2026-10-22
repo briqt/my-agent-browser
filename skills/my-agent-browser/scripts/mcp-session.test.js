@@ -3,6 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { McpSession } = require("./mcp-session");
+const { rewriteClientRequest } = require("./start-mcp");
 
 function fixture(options = {}) {
   const children = [], lines = [], exits = [], errors = [];
@@ -51,6 +52,25 @@ test("replacement reinitializes, ignores the old exit, and never repeats mutatio
   assert.ok(!f.lines.some(x => typeof x.id === "string" && x.id.startsWith("my-agent-browser-initialize")));
   f.reply(replacement, { id: 4, result: { content: [] } });
   assert.equal(f.lines.at(-1).id, 4);
+  f.session.end();
+});
+
+test("the shared request pipeline forwards background defaults once, including after recovery", () => {
+  const config = { mcp: { backgroundNewPages: true }, stealth: { evaluateScript: false } };
+  const f = fixture({ rewriteLine: line => rewriteClientRequest(line, config) });
+  const call = (id, args) => ({ id, method: "tools/call", params: { name: "new_page", arguments: args } });
+  f.write(call(2, { url: "about:blank" }));
+  assert.deepEqual(f.children[0].writes.at(-1).params.arguments, { url: "about:blank", background: true });
+  f.reply(f.children[0], { id: 2, error: { message: "TEST_STALE" } });
+  const replacement = f.children[1];
+  f.write(call(3, { url: "about:blank" }));
+  f.write(call(4, { url: "about:blank", background: false }));
+  assert.equal(replacement.writes.length, 1, "tool calls wait for initialization");
+  f.reply(replacement, { id: replacement.writes[0].id, result: { capabilities: {} } });
+  const calls = replacement.writes.filter(request => request.method === "tools/call");
+  assert.deepEqual(calls.map(request => request.id), [3, 4], "the failed new_page is never replayed");
+  assert.equal(calls[0].params.arguments.background, true);
+  assert.equal(calls[1].params.arguments.background, false);
   f.session.end();
 });
 

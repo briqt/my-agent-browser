@@ -37,6 +37,17 @@ test("the documented title example runs through the actual wrapper", async () =>
   assert.equal(await fn(), "Example");
 });
 
+test("the background policy is optional and disabled in both the example and schema", () => {
+  const root = path.join(__dirname, "..");
+  const example = JSON.parse(fs.readFileSync(path.join(root, "config.example.json"), "utf8"));
+  const schema = JSON.parse(fs.readFileSync(path.join(root, "config.schema.json"), "utf8"));
+  const mcp = schema.properties.mcp;
+  assert.equal(example.mcp.backgroundNewPages, false);
+  assert.equal(mcp.properties.backgroundNewPages.type, "boolean");
+  assert.equal(mcp.properties.backgroundNewPages.default, false);
+  assert.ok(!mcp.required?.includes("backgroundNewPages"));
+});
+
 test("doctor reports installation paths without creating browser state or changing config", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "my-agent-browser-doctor-"));
   try {
@@ -47,7 +58,7 @@ test("doctor reports installation paths without creating browser state or changi
     });
     assert.equal(result.status, 0, result.stderr);
     const report = JSON.parse(result.stdout);
-    assert.equal(report.version, "1.2.0");
+    assert.equal(report.version, "1.3.0");
     assert.equal(report.configPath, path.join(dir, "config.json"));
     assert.equal(report.mode, "lazy");
     assert.equal(fs.readFileSync(report.configPath, "utf8"), config);

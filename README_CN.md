@@ -30,6 +30,7 @@
 - `evaluate_script` 的调用栈自动去除 `pptr:` 标记和 MCP 安装路径（该路径通常含系统用户名）——用站点自有脚本设陷阱实测验证，见 [anti-detection.md](skills/my-agent-browser/references/anti-detection.md)
 - 启动参数推荐基于单因素实测，而非以讹传讹
 - 直连已有 Chrome 实例（`browserUrl` 模式，适合已登录的长期会话）
+- 可选后台新建 tab：`mcp.backgroundNewPages` 默认 `false`，尊重每次调用的显式参数
 
 ### Agent 使用指导（SKILL.md）
 
@@ -107,7 +108,35 @@ Chrome（多 session 共享实例）
 - Chrome 作为独立进程运行，多个 MCP session 共享同一实例
 - `browser.lock` 跟踪活跃客户端数量；最后一个退出时自动关闭 Chrome
 - 所有浏览器配置在 `~/.config/agent-skills/my-agent-browser/config.json`
-- 配置修改在下次 Agent session 生效
+- 配置修改后须重启 MCP session
+
+## 后台新建 tab（v1.3.0）
+
+MCP 依赖仍为 **chrome-devtools-mcp 1.11.0**。
+`~/.config/agent-skills/my-agent-browser/config.json` 中的默认配置：
+
+```json
+{ "mcp": { "backgroundNewPages": false } }
+```
+
+需要启用时改为：
+
+```json
+{ "mcp": { "backgroundNewPages": true } }
+```
+
+将该字段合并到已有配置，随后重启 MCP session。
+`mcp.backgroundNewPages` 是 wrapper 的布尔配置，不是上游 CLI flag，不要放入
+`mcp.flags`。缺省或 `false` 完全保留上游 `new_page` 行为；仅严格为布尔 `true`
+且调用未提供 `background` 时，才补入 `background: true`。调用显式传入的
+`background: true` 或 `false` 始终优先。lazy、eager 和 direct（`browserUrl`）
+模式共用此行为，不受 stealth 开关影响。
+
+这不是全局焦点保证：不保证 Chrome 首次 GUI 启动、网站 `window.open` 弹窗或
+`select_page { pageId, bringToFront: true }` 的焦点行为。`select_page` 只有在
+`bringToFront: true` 时才主动置前；逻辑选中不等于 OS 前台。页面工具直接传入
+`pageId` 即可，无需先 `select_page`。详见[配置说明](skills/my-agent-browser/references/setup.md)
+和[多 tab 工作流](skills/my-agent-browser/references/multi-tab-workflow.md)。
 
 ## SKILL.md 教 Agent 什么
 

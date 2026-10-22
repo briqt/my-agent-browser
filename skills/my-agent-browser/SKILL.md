@@ -14,7 +14,7 @@ description: >
 
 Browser automation for AI agents via `chrome-devtools-mcp` MCP server.
 
-Release **1.2.0**, tested with **chrome-devtools-mcp 1.11.0**. Node 24 LTS is recommended. Check the installed wrapper without launching Chrome:
+Release **1.3.0**, tested with **chrome-devtools-mcp 1.11.0**. Node 24 LTS is recommended. Check the installed wrapper without launching Chrome:
 
 ```bash
 node <skill-dir>/scripts/start-mcp.js --doctor --json
@@ -70,9 +70,9 @@ Each `uid=X_Y` is the identifier you pass to `click`, `fill`, `hover`, etc.
 
 ### Navigation
 - `navigate_page { pageId, url }` — Go to URL
-- `new_page { url }` — Open new tab (returns its pageId)
+- `new_page { url, background? }` — Open new tab (returns its pageId); explicit `background` overrides the wrapper default
 - `list_pages` — List all tabs with pageIds
-- `select_page { pageId }` — Focus a tab (does **not** replace passing pageId on later calls)
+- `select_page { pageId, bringToFront? }` — Select a tab logically; only `bringToFront: true` actively brings it to front (later calls still need pageId)
 - `close_page { pageId }` — Close tab
 
 ### Reading
@@ -109,7 +109,7 @@ These tool groups are **available by default** — no flags needed. See [referen
 
 ## Key Rules
 
-- **Always pass `pageId`** — chrome-devtools-mcp requires it on page-scoped tools (`click`, `fill`, `take_snapshot`, `navigate_page`, `evaluate_script`, `wait_for`, …). Get it from `list_pages` or `new_page`. `select_page` only focuses the tab; later calls still need `pageId`.
+- **Always pass `pageId`** — chrome-devtools-mcp requires it on page-scoped tools (`click`, `fill`, `take_snapshot`, `navigate_page`, `evaluate_script`, `wait_for`, …). Get it from `list_pages` or `new_page`. No preceding `select_page` is needed; logical selection is not OS foreground focus.
 - **UIDs are ephemeral** — After any navigation or interaction that changes the page, previous UIDs are invalid. Always `take_snapshot { pageId }` again before the next interaction.
 - **Use `fill` for inputs** — It targets a specific element and clears first. `type_text` types at whatever is focused, which is fragile.
 - **One action, then re-read** — Don't batch multiple actions without re-snapshotting. The first action may invalidate subsequent UIDs.
@@ -154,9 +154,22 @@ Option C: connect to existing session — set `browserUrl` in config.
 ## Multi-Tab Patterns
 
 - `new_page { url }` opens a tab and returns its pageId — use that pageId on subsequent calls, don't guess
-- Pass the target tab's pageId on every call. `select_page` is only for focusing/bringing to front
+- Pass the target tab's pageId on every call; no `select_page` is needed. Only `select_page { pageId, bringToFront: true }` actively brings a tab to front; logical selection is not OS foreground focus.
 - "Open in new tab, extract, close, return" pattern avoids losing your place on listing pages
 - Each tab is independent — snapshots, UIDs, and page state don't cross tabs
+
+### Background new pages
+
+`config.mcp.backgroundNewPages` defaults to `false`; omitted/`false` preserves
+upstream `new_page` behavior entirely. To opt in, merge
+`{ "mcp": { "backgroundNewPages": true } }` into config and restart the MCP session.
+Only strict boolean `true` adds `background: true` when a `new_page` call omits
+`background`; explicit `background: true` or `false` is always respected.
+This is wrapper config, not an upstream CLI flag—do not put it in `mcp.flags`.
+Lazy, eager and direct (`browserUrl`) modes share it, independently of stealth.
+It does not guarantee focus behavior for Chrome's first GUI launch, website
+`window.open` popups, or `select_page` with `bringToFront: true`.
+See [setup](references/setup.md) and [multi-tab workflow](references/multi-tab-workflow.md).
 
 ## JavaScript Execution Tips
 

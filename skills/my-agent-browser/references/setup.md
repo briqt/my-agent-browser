@@ -89,6 +89,7 @@ Edit `~/.config/agent-skills/my-agent-browser/config.json`:
     "lazyStart": true
   },
   "mcp": {
+    "backgroundNewPages": false,
     "features": [],
     "flags": []
   }
@@ -108,9 +109,33 @@ Edit `~/.config/agent-skills/my-agent-browser/config.json`:
 | `browser.debuggingPort` | Chrome remote debugging port | `39813` |
 | `browser.browserUrl` | Connect to an existing Chrome instance instead of launching one (e.g. `http://127.0.0.1:9222`). When set, `headless`/`userDataDir`/`extraArgs` are ignored | `""` (launch new) |
 | `browser.extraArgs` | Additional Chrome command-line flags (see below) | `[]` |
+| `mcp.backgroundNewPages` | Wrapper boolean: only strict `true` supplies `background: true` for `new_page` calls that omit `background`; explicit `true`/`false` is respected. Omitted/`false` preserves upstream behavior | `false` |
 | `mcp.features` / `mcp.flags` | Both are passthrough arrays of CLI flags for `chrome-devtools-mcp`. Merged and forwarded as-is; the split is only cosmetic. See "Tuning the tool set" below | `[]` |
 | `stealth.evaluateScript` | Rewrite `evaluate_script` so page-visible stack traces carry no `pptr:` marker and no MCP install path (that path usually contains your OS username). See [anti-detection.md](anti-detection.md) | `true` |
 | `stealth.sourceUrl` | The name rewritten scripts show as in stack traces. Single token, no whitespace | `"eval.js"` |
+
+### Background new pages (wrapper 1.3.0)
+
+`mcp.backgroundNewPages` is a wrapper boolean, **not** an upstream CLI flag;
+do not put it in `mcp.flags`. Its default is `false` as shown above. To enable,
+merge this field into your existing config (keep your other settings):
+
+```json
+{ "mcp": { "backgroundNewPages": true } }
+```
+
+- Omitted or `false`: preserve upstream `new_page` behavior entirely.
+- Strict boolean `true`: add `background: true` only if the `new_page` call
+  does not provide `background`. Explicit `background: true` or `false` wins.
+- Lazy, eager and direct (`browserUrl`) modes share this behavior; stealth
+  settings do not affect it.
+- Restart the MCP session after changing config; edits do not apply live.
+
+This does not guarantee focus behavior for Chrome's first GUI launch, website
+`window.open` popups, or `select_page { pageId, bringToFront: true }`. Only
+`bringToFront: true` actively brings the tab to front; logical selection is not
+OS foreground focus. Pass `pageId` directly on page-scoped tools—no preceding
+`select_page` is needed. See [multi-tab-workflow.md](multi-tab-workflow.md).
 
 ### Common `extraArgs` flags
 

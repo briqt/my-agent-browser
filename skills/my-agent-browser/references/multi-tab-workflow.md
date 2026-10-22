@@ -3,7 +3,9 @@
 chrome-devtools-mcp routes page-scoped tools by **pageId**. Get ids from
 `list_pages` or `new_page`, then pass that pageId on every `take_snapshot` /
 `click` / `fill` / `evaluate_script` / `wait_for` / `navigate_page` call.
-`select_page` only focuses the tab; it does not replace `pageId` on later calls.
+Pass `pageId` directly; `select_page` is not required for routing. It changes
+logical selection and only actively brings the tab to front with `bringToFront: true`.
+Logical selection is not OS foreground focus.
 
 ## Opening New Tabs
 
@@ -19,6 +21,30 @@ Blank tab (navigate later):
 ```
 new_page { url: "about:blank" }
 ```
+
+### Background new tabs (wrapper 1.3.0)
+
+The default config is `{ "mcp": { "backgroundNewPages": false } }`.
+Omitted or `false` leaves upstream `new_page` behavior entirely unchanged. To
+opt in, merge this into your config and restart the MCP session:
+
+```json
+{ "mcp": { "backgroundNewPages": true } }
+```
+
+Only strict boolean `true` supplies `background: true` when a `new_page` call
+does not provide `background`. Explicit call values always win:
+
+```
+new_page { url: "https://example.com" }                     # inherits wrapper setting
+new_page { url: "https://example.com", background: true }   # explicitly background
+new_page { url: "https://example.com", background: false }  # explicit upstream foreground behavior
+```
+
+This is wrapper config, not an upstream CLI flag; do not put it in `mcp.flags`.
+It applies in lazy, eager and direct (`browserUrl`) modes, regardless of stealth
+settings. It does not guarantee focus behavior for Chrome's first GUI launch,
+website `window.open` popups, or `select_page` with `bringToFront: true`.
 
 ## Listing Open Tabs
 
@@ -39,17 +65,22 @@ do not assume they are 0-based indices or that they pack densely after a close.
 
 ## Switching Tabs
 
-Focus a tab (bring to front):
-
-```
-select_page { pageId: 2 }
-```
-
-Then still pass that same pageId on the next snapshot/click:
+To work on a tab, pass its pageId directly; no `select_page` is needed:
 
 ```
 take_snapshot { pageId: 2 }
 ```
+
+If logical selection is needed, use `select_page { pageId: 2 }`. When
+`bringToFront` is omitted or `false`, it does not actively bring the tab to front.
+To explicitly request bringing it to front:
+
+```
+select_page { pageId: 2, bringToFront: true }
+```
+
+Logical selection (including `[selected]` in `list_pages`) is not OS foreground
+focus. Later page-scoped calls still need `pageId`.
 
 ## Closing Tabs
 
@@ -82,7 +113,7 @@ new_page { url: "https://site-b.com/product" }
 take_snapshot { pageId: 2 }
 # Extract data from page B
 
-# Back to A — pass A's pageId; select_page is optional (focus only)
+# Back to A — pass A's pageId directly; no select_page needed
 take_snapshot { pageId: 1 }
 ```
 

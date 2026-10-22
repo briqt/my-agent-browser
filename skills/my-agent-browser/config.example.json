@@ -25,7 +25,8 @@
   },
   "mcp": {
     "features": [],
-    "flags": []
+    "flags": [],
+    "backgroundNewPages": false
   },
   "stealth": {
     "evaluateScript": true,

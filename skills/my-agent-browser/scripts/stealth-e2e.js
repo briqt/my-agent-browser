@@ -78,7 +78,7 @@ function textOf(response) {
   return content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
 }
 
-async function runOnce({ stealthEnabled, trapUrl, lazyStart = true }) {
+async function runOnce({ stealthEnabled, trapUrl, lazyStart = true, backgroundNewPages = false }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "mab-e2e-"));
   fs.writeFileSync(
     path.join(home, "config.json"),
@@ -91,6 +91,7 @@ async function runOnce({ stealthEnabled, trapUrl, lazyStart = true }) {
         extraArgs: ["--disable-dev-shm-usage", "--no-sandbox"],
         lazyStart,
       },
+      mcp: { backgroundNewPages },
       stealth: { evaluateScript: stealthEnabled },
     }),
   );
@@ -170,8 +171,8 @@ async function runOnce({ stealthEnabled, trapUrl, lazyStart = true }) {
   };
 
   try {
-    console.log("running control (stealth off)...");
-    const off = await runOnce({ stealthEnabled: false, trapUrl });
+    console.log("running control (stealth off, background new pages on)...");
+    const off = await runOnce({ stealthEnabled: false, trapUrl, backgroundNewPages: true });
     check(
       "control: without stealth the page does see a pptr: frame",
       off.includes("pptr:"),
@@ -191,8 +192,8 @@ async function runOnce({ stealthEnabled, trapUrl, lazyStart = true }) {
 
     // lazyStart: false takes a different stdin path (startMcpProxied instead of the
     // lazy state machine), and browserUrl mode shares that same path.
-    console.log("running subject (stealth on, lazyStart off)...");
-    const eager = await runOnce({ stealthEnabled: true, trapUrl, lazyStart: false });
+    console.log("running subject (stealth on, lazyStart off, background new pages on)...");
+    const eager = await runOnce({ stealthEnabled: true, trapUrl, lazyStart: false, backgroundNewPages: true });
     check("non-lazy: no pptr: frame", !eager.includes("pptr:"), eager.slice(0, 400));
     check(
       "non-lazy: the trap still fired",

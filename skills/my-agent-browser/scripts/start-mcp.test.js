@@ -15,6 +15,8 @@ const {
   stealthConfig,
   wrapStealthFunction,
   rewriteClientLine,
+  rewriteNewPageBackground,
+  rewriteClientRequest,
 } = require("./start-mcp.js");
 
 // puppeteer's own regex — if a wrapped script stops matching it, puppeteer goes back
@@ -136,6 +138,67 @@ test("rewriteClientLine survives malformed arguments", () => {
   for (const line of malformed) {
     assert.strictEqual(rewriteClientLine(line, stealth), line);
   }
+});
+
+function newPageCall(args = { url: "about:blank" }) {
+  return JSON.stringify({ jsonrpc: "2.0", id: 12, method: "tools/call", params: { name: "new_page", arguments: args } });
+}
+
+const BACKGROUND_CONFIG = { mcp: { backgroundNewPages: true } };
+
+test("background new pages require an explicit boolean opt-in and otherwise preserve bytes", () => {
+  const line = `  ${newPageCall()}  `;
+  for (const config of [undefined, {}, { mcp: {} }, ...[false, "true", "false", 1, null].map(backgroundNewPages => ({ mcp: { backgroundNewPages } }))]) {
+    assert.strictEqual(rewriteNewPageBackground(line, config), line);
+    assert.strictEqual(rewriteClientRequest(line, config), line);
+  }
+});
+
+test("background new pages fill only the omitted argument and preserve every other field", () => {
+  const args = { url: "about:blank", isolatedContext: "test", timeout: 5000 };
+  const request = JSON.parse(newPageCall(args));
+  request.params._meta = { progressToken: "opening" };
+  const result = JSON.parse(rewriteNewPageBackground(JSON.stringify(request), BACKGROUND_CONFIG));
+  assert.deepStrictEqual(result, { ...request, params: { ...request.params, arguments: { ...args, background: true } } });
+});
+
+test("background new pages never override an explicit argument, including invalid values", () => {
+  for (const background of [true, false, null, "false", 0, {}, []]) {
+    const line = `  ${newPageCall({ url: "about:blank", background })}  `;
+    assert.strictEqual(rewriteNewPageBackground(line, BACKGROUND_CONFIG), line);
+  }
+});
+
+test("background new pages leave unrelated messages and malformed requests untouched", () => {
+  const lines = [
+    "not json", "", "null", "[]", "42",
+    JSON.stringify({ method: "initialize", params: { name: "new_page", arguments: {} } }),
+    JSON.stringify({ method: "notifications/initialized" }),
+    JSON.stringify({ id: 12, result: { name: "new_page", arguments: {} } }),
+    JSON.stringify({ method: "tools/call", params: { name: "select_page", arguments: { pageId: 1, bringToFront: true } } }),
+    JSON.stringify({ method: "tools/call", params: { name: "new_page_extra", arguments: {} } }),
+    JSON.stringify({ method: "tools/call", params: { name: "new_page" } }),
+    ...[null, [], "args", true, 42].map(args => newPageCall(args)),
+  ];
+  for (const line of lines) assert.strictEqual(rewriteNewPageBackground(line, BACKGROUND_CONFIG), line);
+});
+
+test("background new pages and script rewriting are independent in the shared request pipeline", () => {
+  for (const evaluateScript of [true, false]) {
+    const config = { ...BACKGROUND_CONFIG, stealth: { evaluateScript } };
+    const result = JSON.parse(rewriteClientRequest(newPageCall(), config));
+    assert.strictEqual(result.params.arguments.background, true);
+    const script = toolCall("() => document.title");
+    const rewritten = rewriteClientRequest(script, config);
+    if (evaluateScript) assert.match(rewrittenFunction(rewritten), /sourceURL=eval\.js/);
+    else assert.strictEqual(rewritten, script);
+  }
+});
+
+test("the background policy does not become a browser argument or an upstream MCP flag", () => {
+  const { buildMcpArgs } = require("./start-mcp.js");
+  assert.deepStrictEqual(buildChromeArgs(BACKGROUND_CONFIG.browser || {}, 39813, "/tmp/profile"), buildChromeArgs({}, 39813, "/tmp/profile"));
+  assert.deepStrictEqual(buildMcpArgs(BACKGROUND_CONFIG, "http://127.0.0.1:39813"), ["--browserUrl=http://127.0.0.1:39813"]);
 });
 
 test("buildChromeArgs no longer ships fingerprint-damaging defaults", () => {

@@ -8,7 +8,7 @@ const http = require("http");
 const { execFileSync, spawn } = require("child_process");
 
 const { McpSession } = require("./mcp-session.js");
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 const MCP_VERSION = "1.11.0";
 const SKILL_NAME = "my-agent-browser";
 const configDir =
@@ -413,6 +413,23 @@ function rewriteClientLine(line, stealth) {
   try { return JSON.stringify(msg); } catch { return line; }
 }
 
+// Opt-in default for new tabs. Explicit arguments (even invalid ones) stay with
+// upstream; disabled policies preserve the original message byte-for-byte.
+function rewriteNewPageBackground(line, config) {
+  if (config?.mcp?.backgroundNewPages !== true) return line;
+  let msg;
+  try { msg = JSON.parse(line); } catch { return line; }
+  if (msg?.method !== "tools/call" || msg.params?.name !== "new_page") return line;
+  const args = msg.params.arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args) || Object.hasOwn(args, "background")) return line;
+  args.background = true;
+  try { return JSON.stringify(msg); } catch { return line; }
+}
+
+function rewriteClientRequest(line, config) {
+  return rewriteClientLine(rewriteNewPageBackground(line, config), stealthConfig(config));
+}
+
 function buildNoProxyEnv() {
   // Node.js undici (globalThis.fetch) does NOT support shell wildcards (127.*)
   // or CIDR (127.0.0.0/8) in NO_PROXY. It only matches exact hostnames/IPs or
@@ -441,11 +458,11 @@ function startMcp(args, { pipe = false } = {}) {
 }
 
 // Run the MCP child with its stdio proxied, so client→server lines pass through
-// rewriteClientLine. Used by the modes that don't need the lazy-start state machine.
+// rewriteClientRequest. Shared by lazy, eager and direct connection modes.
 function createMcpSession(args, config, shouldRecover = responseHasStaleStateError) {
   return new McpSession({
     spawnChild: () => startMcp(args, { pipe: true }),
-    rewriteLine: line => rewriteClientLine(line, stealthConfig(config)),
+    rewriteLine: line => rewriteClientRequest(line, config),
     shouldRecover,
     log: message => process.stderr.write(`[my-agent-browser] ${message}\n`),
   });
@@ -803,4 +820,6 @@ module.exports = {
   stealthConfig,
   wrapStealthFunction,
   rewriteClientLine,
+  rewriteNewPageBackground,
+  rewriteClientRequest,
 };
