@@ -14,7 +14,7 @@ description: >
 
 Browser automation for AI agents via `chrome-devtools-mcp` MCP server.
 
-Release **1.3.0**, tested with **chrome-devtools-mcp 1.11.0**. Node 24 LTS is recommended. Check the installed wrapper without launching Chrome:
+Release **1.4.0**, tested with **chrome-devtools-mcp 1.12.0**. Node 24 LTS is recommended. Check the installed wrapper without launching Chrome:
 
 ```bash
 node <skill-dir>/scripts/start-mcp.js --doctor --json
@@ -29,11 +29,10 @@ wrapper and installed skill differ, reinstall this skill before troubleshooting 
 
 If browser MCP tools (`navigate_page`, `take_snapshot`, `click`, `fill`) are not available in your tool list:
 
-1. Install: `npm install -g chrome-devtools-mcp@1.11.0`
+1. Install: `npm install -g chrome-devtools-mcp@1.12.0`
 2. Create config:
    ```bash
-   mkdir -p ~/.config/agent-skills/my-agent-browser
-   cp <skill-dir>/config.example.json ~/.config/agent-skills/my-agent-browser/config.json
+   node <skill-dir>/scripts/start-mcp.js --init-config
    ```
 3. Register the MCP server in your agent/IDE. The MCP server entry is:
    - Name: `browser`
@@ -43,9 +42,18 @@ If browser MCP tools (`navigate_page`, `take_snapshot`, `click`, `fill`) are not
    How to register depends on your environment — consult your agent's `/help`, official docs, or settings UI to find where MCP servers are configured.
 4. Restart the agent session
 
+## Updates
+
+The wrapper checks the fixed project update feed asynchronously once per hour at most.
+Version and announcement reminders go to stderr, with a separate 24-hour cooldown.
+It never installs updates. Use `--check-update --json` for an explicit check, or
+`disable_update_check: true` / `--no-update-check` to disable checks and reminders.
+`--help`, `--version`, `--doctor` and `--init-config` do not check the network.
+See [update-checks.md](references/update-checks.md) for cache, publishing and upgrade details.
+
 ## Core Workflow
 
-1. `list_pages` or `new_page { url }` — get a **pageId** (required on every page-scoped tool)
+1. `list_pages` or `new_page { url }` — get a numeric **pageId** (required on every page-scoped tool; use `2`, not `"2"`)
 2. `navigate_page { pageId, url }` — go to a page (skip if you just used `new_page`)
 3. `take_snapshot { pageId }` — read the page structure with uid refs
 4. `click { pageId, uid }` / `fill { pageId, uid, value }` / `press_key { pageId, key }` — interact
@@ -105,11 +113,11 @@ These tool groups are **available by default** — no flags needed. See [referen
 - **Console**: `list_console_messages` / `get_console_message` — browser console
 - **Emulation**: `emulate` — throttle network/CPU, geolocation, color scheme
 
-`mcp.flags` in config is a passthrough to chrome-devtools-mcp. Use it to **shrink** the tool set (`--no-categoryNetwork` / `--no-categoryPerformance` / `--no-categoryEmulation`, or `--slim` for 3 tools) or to **add opt-in** groups (`--memoryDebugging` / `--experimentalMemory` for heap-snapshot analysis, `--categoryExtensions`, `--experimentalVision` for coordinate `click_at`). Authoritative flag list: `npx chrome-devtools-mcp@1.11.0 --help`.
+`mcp.flags` in config is a passthrough to chrome-devtools-mcp. Use it to **shrink** the tool set (`--no-categoryNetwork` / `--no-categoryPerformance` / `--no-categoryEmulation`) or to **add opt-in** groups (`--memoryDebugging` / `--experimentalMemory` for heap-snapshot analysis, `--categoryExtensions`, `--experimentalVision` for coordinate `click_at`). Authoritative flag list: `npx chrome-devtools-mcp@1.12.0 --help`.
 
 ## Key Rules
 
-- **Always pass `pageId`** — chrome-devtools-mcp requires it on page-scoped tools (`click`, `fill`, `take_snapshot`, `navigate_page`, `evaluate_script`, `wait_for`, …). Get it from `list_pages` or `new_page`. No preceding `select_page` is needed; logical selection is not OS foreground focus.
+- **Always pass numeric `pageId`** — For example, `take_snapshot { pageId: 2 }`, never `pageId: "2"`. Chrome DevTools MCP requires it on page-scoped tools (`click`, `fill`, `take_snapshot`, `navigate_page`, `evaluate_script`, `wait_for`, …). Get it from `list_pages` or `new_page`. No preceding `select_page` is needed; logical selection is not OS foreground focus.
 - **UIDs are ephemeral** — After any navigation or interaction that changes the page, previous UIDs are invalid. Always `take_snapshot { pageId }` again before the next interaction.
 - **Use `fill` for inputs** — It targets a specific element and clears first. `type_text` types at whatever is focused, which is fragile.
 - **One action, then re-read** — Don't batch multiple actions without re-snapshotting. The first action may invalidate subsequent UIDs.
@@ -206,6 +214,7 @@ See [setup](references/setup.md) and [multi-tab workflow](references/multi-tab-w
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | Click/fill does nothing | Stale UIDs | `take_snapshot { pageId }` again, use fresh UIDs |
+| `expected number, received string` | `pageId` was quoted | Pass a number, e.g. `pageId: 2`, not `"2"` |
 | `Required at pageId` | pageId omitted | `list_pages` / `new_page`, then pass that pageId on every page-scoped call |
 | Element not in snapshot | Below fold / iframe / async | Scroll first, or `wait_for { pageId }`, or `evaluate_script { pageId }` to check |
 | `wait_for` timeout | Text never appeared | `take_snapshot { pageId }` to see actual state |

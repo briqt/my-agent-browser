@@ -58,7 +58,7 @@ test("doctor reports installation paths without creating browser state or changi
     });
     assert.equal(result.status, 0, result.stderr);
     const report = JSON.parse(result.stdout);
-    assert.equal(report.version, "1.3.0");
+    assert.equal(report.version, require("../version.json").version);
     assert.equal(report.configPath, path.join(dir, "config.json"));
     assert.equal(report.mode, "lazy");
     assert.equal(fs.readFileSync(report.configPath, "utf8"), config);

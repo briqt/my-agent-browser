@@ -44,9 +44,8 @@ Production-ready wrapper around [chrome-devtools-mcp](https://github.com/ChromeD
 
 ```bash
 npx skills add briqt/my-agent-browser -g -y
-npm install -g chrome-devtools-mcp@1.11.0
-mkdir -p ~/.config/agent-skills/my-agent-browser
-cp ~/.agents/skills/my-agent-browser/config.example.json ~/.config/agent-skills/my-agent-browser/config.json
+npm install -g chrome-devtools-mcp@1.12.0
+node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js --init-config
 ```
 
 Then register the MCP server in your agent:
@@ -112,7 +111,7 @@ Chrome (shared across sessions)
 
 ## Background new tabs (v1.3.0)
 
-The MCP dependency remains **chrome-devtools-mcp 1.11.0**. In
+The MCP dependency remains **chrome-devtools-mcp 1.12.0**. In
 `~/.config/agent-skills/my-agent-browser/config.json`, the default is:
 
 ```json
@@ -175,11 +174,27 @@ The bundled SKILL.md provides workflow guidance so agents avoid common pitfalls:
 └── README_CN.md
 ```
 
+## Update checks and notices (v1.4.0)
+
+The MCP wrapper checks for project updates asynchronously without blocking startup.
+Checks use a one-hour interval (five-minute backoff after failure); version and
+announcement reminders each have a 24-hour cooldown. Hints go to stderr and never
+install anything. Set `disable_update_check: true` or pass `--no-update-check` to
+skip networking and cached reminders.
+
+```bash
+node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js --check-update --json
+```
+
+`--version`, `--doctor`, `--help` and `--init-config` stay offline. Update the skill
+and MCP dependency separately, then restart the MCP session. See
+[update behavior and publishing](skills/my-agent-browser/references/update-checks.md).
+
 ## Updating
 
 ```bash
 npx skills update my-agent-browser -g -y
-npm install -g chrome-devtools-mcp@1.11.0
+npm install -g chrome-devtools-mcp@1.12.0
 ```
 
 Upgrading from v1.0.x, migrate your config to the v1.1 flag recommendations

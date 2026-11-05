@@ -31,5 +31,6 @@
   "stealth": {
     "evaluateScript": true,
     "sourceUrl": "eval.js"
-  }
+  },
+  "disable_update_check": false
 }

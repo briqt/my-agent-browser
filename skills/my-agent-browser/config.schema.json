@@ -34,7 +34,9 @@
         },
         "extraArgs": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "传递给 Chrome 的额外启动参数"
         },
         "browserUrl": {
@@ -54,12 +56,16 @@
       "properties": {
         "features": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "启用的 MCP 功能标志"
         },
         "flags": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "传递给 chrome-devtools-mcp 的额外 CLI 参数"
         },
         "backgroundNewPages": {
@@ -84,6 +90,11 @@
           "default": "eval.js"
         }
       }
+    },
+    "disable_update_check": {
+      "type": "boolean",
+      "default": false,
+      "description": "Disable wrapper update networking and cached notifications. Does not control the upstream MCP updater."
     }
   }
 }

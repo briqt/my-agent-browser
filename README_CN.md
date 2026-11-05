@@ -44,9 +44,8 @@
 
 ```bash
 npx skills add briqt/my-agent-browser -g -y
-npm install -g chrome-devtools-mcp@1.11.0
-mkdir -p ~/.config/agent-skills/my-agent-browser
-cp ~/.agents/skills/my-agent-browser/config.example.json ~/.config/agent-skills/my-agent-browser/config.json
+npm install -g chrome-devtools-mcp@1.12.0
+node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js --init-config
 ```
 
 然后在你的 Agent 中注册 MCP 服务器：
@@ -112,7 +111,7 @@ Chrome（多 session 共享实例）
 
 ## 后台新建 tab（v1.3.0）
 
-MCP 依赖仍为 **chrome-devtools-mcp 1.11.0**。
+MCP 依赖仍为 **chrome-devtools-mcp 1.12.0**。
 `~/.config/agent-skills/my-agent-browser/config.json` 中的默认配置：
 
 ```json
@@ -148,11 +147,25 @@ MCP 依赖仍为 **chrome-devtools-mcp 1.11.0**。
 - **错误恢复** — UID 过期、超时、Chrome 重启
 - **登录流程** — 持久 profile、自动填充凭证、连接已有会话
 
+## 版本检查与通知（v1.4.0）
+
+启动 MCP 时异步检查项目更新，不等待检查完成；联网失败不影响浏览器工作。
+检查间隔 1 小时，失败后 5 分钟重试；相同版本和公告分别每 24 小时最多提醒一次。
+提示只写 stderr，不自动升级。配置 `disable_update_check: true` 或启动参数
+`--no-update-check` 可关闭联网和缓存提醒。
+
+```bash
+node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js --check-update --json
+```
+
+`--version`、`--doctor`、`--help` 和 `--init-config` 不联网。Skill 与 MCP 依赖需分别
+更新，随后重启 MCP 会话。详见[更新机制](skills/my-agent-browser/references/update-checks.md)。
+
 ## 更新
 
 ```bash
 npx skills update my-agent-browser -g -y
-npm install -g chrome-devtools-mcp@1.11.0
+npm install -g chrome-devtools-mcp@1.12.0
 ```
 
 从 v1.0.x 升级时，把配置迁移到 v1.1 的参数推荐（先看 diff，再 `--apply`）：

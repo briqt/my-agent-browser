@@ -8,8 +8,8 @@ const http = require("http");
 const { execFileSync, spawn } = require("child_process");
 
 const { McpSession } = require("./mcp-session.js");
-const VERSION = "1.3.0";
-const MCP_VERSION = "1.11.0";
+const { version: VERSION, tested_mcp_version: MCP_VERSION } = require("../version.json");
+const { checkUpdate } = require("./update-check.js");
 const SKILL_NAME = "my-agent-browser";
 const configDir =
   process.env.MY_AGENT_BROWSER_HOME ||
@@ -29,16 +29,19 @@ function expandHome(p) {
 function loadConfig() {
   const skillDir = path.resolve(__dirname, "..");
   const devConfig = path.join(skillDir, ".config.json");
-  const candidates = [devConfig, configFile];
+  const candidates = process.argv.includes("--dev-config") ? [devConfig, configFile] : [configFile];
 
   for (const f of candidates) {
     if (fs.existsSync(f)) {
       try {
-        const cfg = JSON.parse(fs.readFileSync(f, "utf-8"));
+        let cfg;
+        try { cfg = JSON.parse(fs.readFileSync(f, "utf-8")); }
+        catch { throw new Error("invalid JSON"); }
+        validateConfig(cfg);
         process.stderr.write(`[my-agent-browser] config loaded: ${f}\n`);
         return cfg;
       } catch (e) {
-        process.stderr.write(`[my-agent-browser] failed to parse ${f}: ${e.message}\n`);
+        process.stderr.write(`[my-agent-browser] invalid config ${f}: ${e.message}\nEdit this file or create a missing config with: node "${__filename}" --init-config\n`);
         process.exit(1);
       }
     }
@@ -51,6 +54,32 @@ function loadConfig() {
     `Then edit ${configFile} to set your preferences.\nUsing defaults for now.\n`
   );
   return {};
+}
+
+function validateConfig(config) {
+  const schema = require("../config.schema.json");
+  function visit(value, rule, field) {
+    const valid = rule.type === "object" ? value && typeof value === "object" && !Array.isArray(value)
+      : rule.type === "array" ? Array.isArray(value)
+      : rule.type === "integer" ? Number.isInteger(value) : typeof value === rule.type;
+    if (!valid) throw new Error(`${field} must be ${rule.type}`);
+    if (rule.type === "object") for (const [key, child] of Object.entries(rule.properties || {})) {
+      if (Object.hasOwn(value, key)) visit(value[key], child, `${field}.${key}`);
+    }
+    if (rule.type === "array") value.forEach((item, i) => visit(item, rule.items, `${field}[${i}]`));
+  }
+  visit(config, schema, "config");
+}
+
+function initConfig() {
+  fs.mkdirSync(configDir, { recursive: true });
+  try {
+    fs.writeFileSync(configFile, fs.readFileSync(path.join(__dirname, "../config.example.json")), { flag: "wx", mode: 0o600 });
+    console.log(`Created ${configFile}`);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    console.log(`Preserved existing config: ${configFile}`);
+  }
 }
 
 // --- Lock file management ---
@@ -736,10 +765,15 @@ function printDoctor() {
   report.mcpMatchesTestedVersion = report.mcpVersion === MCP_VERSION;
   try {
     const dev = path.resolve(__dirname, "..", ".config.json");
-    const actual = fs.existsSync(dev) ? dev : configFile;
+    const actual = process.argv.includes("--dev-config") && fs.existsSync(dev) ? dev : configFile;
     report.configPath = actual;
     report.configExists = fs.existsSync(actual);
-    const cfg = report.configExists ? JSON.parse(fs.readFileSync(actual, "utf8")) : {};
+    let cfg = {};
+    if (report.configExists) {
+      try { cfg = JSON.parse(fs.readFileSync(actual, "utf8")); }
+      catch { throw new Error("invalid JSON"); }
+      validateConfig(cfg);
+    }
     report.mode = cfg.browser?.browserUrl ? "direct" : cfg.browser?.lazyStart === false ? "eager" : "lazy";
   } catch (error) { report.configError = error.message; process.exitCode = 1; }
   console.log(JSON.stringify(report, null, process.argv.includes("--json") ? undefined : 2));
@@ -748,9 +782,33 @@ function printDoctor() {
 // --- Main ---
 
 async function main() {
+  if (process.argv.includes("--help")) {
+    console.log(`my-agent-browser ${VERSION}
+Usage: node "${__filename}" [options]
+  --version              Print wrapper version; no config or network access
+  --doctor --json        Inspect local installation without launching Chrome
+  --init-config          Create user config, preserving any existing file
+  --check-update --json  Check the fixed release feed now; never install updates
+  --no-update-check      Disable network checks and cached notifications
+  --dev-config           Explicitly allow skill-directory .config.json
+Runtime data: MY_AGENT_BROWSER_HOME overrides ${path.join(os.homedir(), ".config", "agent-skills", SKILL_NAME)}
+Without options, start the MCP stdio proxy. Automatic update checks run asynchronously;
+notifications use stderr only. Config disable_update_check also disables explicit checks.`);
+    return;
+  }
   if (process.argv.includes("--version")) { console.log(VERSION); return; }
+  if (process.argv.includes("--init-config")) { initConfig(); return; }
   if (process.argv.includes("--doctor")) { printDoctor(); return; }
   const config = loadConfig();
+  const updateOptions = { dir: configDir, disabled: config.disable_update_check === true || process.argv.includes("--no-update-check") };
+  if (process.argv.includes("--check-update")) {
+    const result = await checkUpdate({ ...updateOptions, force: true });
+    if (result.error) process.stderr.write(`[my-agent-browser] ${result.error}\n`);
+    console.log(process.argv.includes("--json") ? JSON.stringify(result) : `Update check: ${result.status}; current ${VERSION}${result.latest_version ? `; feed ${result.latest_version}` : ""}`);
+    return;
+  }
+  // No await: MCP initialization is never held up by optional update networking.
+  void checkUpdate(updateOptions);
   const b = config.browser || {};
   const port = b.debuggingPort || DEFAULT_PORT;
   const lazyStart = b.lazyStart !== false;

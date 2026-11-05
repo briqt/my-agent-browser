@@ -29,14 +29,13 @@ This installs the skill (SKILL.md, scripts, references) to `<skill-dir>`.
 ### Step 2: Install the runtime dependency
 
 ```bash
-npm install -g chrome-devtools-mcp@1.11.0
+npm install -g chrome-devtools-mcp@1.12.0
 ```
 
 ### Step 3: Create your personal config
 
 ```bash
-mkdir -p ~/.config/agent-skills/my-agent-browser
-cp <skill-dir>/config.example.json ~/.config/agent-skills/my-agent-browser/config.json
+node <skill-dir>/scripts/start-mcp.js --init-config
 ```
 
 ### Step 4: Register the MCP server in your agent/IDE
@@ -237,14 +236,14 @@ Note: Chrome locks user-data-dir, so you can't use the same profile simultaneous
 
 Both arrays are passed straight through to `chrome-devtools-mcp` (merged in order).
 There is no functional difference between them — the split is cosmetic, pick either.
-The authoritative flag list is always `npx chrome-devtools-mcp@1.11.0 --help`.
+The authoritative flag list is always `npx chrome-devtools-mcp@1.12.0 --help`.
 
 **You usually need nothing here.** Out of the box, chrome-devtools-mcp already
 exposes the full tool set: navigation, snapshots, interaction, **plus network,
 performance, emulation, lighthouse and console tools**. The `--categoryNetwork`,
 `--categoryPerformance` and `--categoryEmulation` groups default to *on*; lighthouse
-and console tools are part of the default set too. Verified with `mcp.flags: []` →
-29 tools exposed. So there is no "unlock advanced tools" step — they're already there.
+and console tools are part of the default set too. There is no "unlock advanced tools" step — they are already there; the exact tool
+count varies with the upstream release and configuration.
 
 **`pageId` routing is on by default** (chrome-devtools-mcp 1.8+). Page-scoped
 tools (`click`, `fill`, `take_snapshot`, `navigate_page`, `evaluate_script`,
@@ -262,7 +261,7 @@ Use `mcp.flags` only to **shrink** or **extend** that default:
 | `--no-categoryNetwork` | Drop `list_network_requests` / `get_network_request` |
 | `--no-categoryPerformance` | Drop the performance / trace tools |
 | `--no-categoryEmulation` | Drop `emulate` |
-| `--slim` | Minimal 3-tool set: navigation, `evaluate_script`, screenshot |
+| `--slim` | Alternate `navigate` / `evaluate` / `screenshot` tools; normal pageId routing and wrapper script/background policies do not apply |
 
 **Extend** — opt-in groups, off by default:
 
@@ -289,6 +288,14 @@ Example — trim network/performance and add coordinate clicking:
 > if a flag seems to have no effect. `--categoryPwa` exists but only works with
 > a pipe connection, not with this project's `--browserUrl` mode.
 
+`--slim` remains valid for this MCP server. The 1.12 restriction refers to the
+separate `chrome-devtools start` CLI, which this wrapper does not use. Keep the
+normal tool set when following SKILL.md.
+
+`--watchConfig` watches an upstream JSON config supplied by `--config`; it does not
+watch this wrapper's config.json. Wrapper settings and browser launch/connection
+settings still need a session restart.
+
 ### Connecting to an existing Chrome instance
 
 If you need to connect to a Chrome that's already running (e.g., in Docker, a remote machine, or to preserve login state across sessions):
@@ -313,7 +320,7 @@ When `browserUrl` is set, chrome-devtools-mcp connects to the existing instance 
 
 ```bash
 npx skills update my-agent-browser -g
-npm install -g chrome-devtools-mcp@1.11.0
+npm install -g chrome-devtools-mcp@1.12.0
 ```
 
 ## Uninstalling
@@ -326,3 +333,6 @@ rm -rf ~/.config/agent-skills/my-agent-browser
 
 For MCP 1.11 filesystem roots, script/file formats, and built-in recording changes,
 see [dependency-upgrades.md](dependency-upgrades.md).
+
+For wrapper update notifications, explicit checks, disabling checks, development
+config selection and cache behavior, see [update-checks.md](update-checks.md).

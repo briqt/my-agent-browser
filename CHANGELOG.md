@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.4.0 — 2026-11-05
+
+- Pin the tested/fallback MCP dependency to 1.12.0; document upstream concurrency,
+  focus, config reload and slim-mode boundaries.
+- Add optional asynchronous update checks, stable-version comparison, bounded feed
+  fetching, cache/backoff, independent version/notice cooldowns and process locking.
+  Notifications use stderr; checks never install updates or fail browser operations.
+- Add `--check-update`, `--no-update-check`, `--init-config` and `--help`.
+  `version.json` is the wrapper version and tested-dependency source.
+- Require explicit `--dev-config` for skill-local configuration; validate configured
+  field types without echoing secret values. Existing user config is preserved.
+- Clarify numeric pageId (issue #2); add upstream schema, direct-mode and real-child
+  recovery integration checks alongside isolated update-check tests.
+- Record issue #3 analysis and multi-action browser research without adding a batch
+  execution API in this release.
+
 ## v1.3.0
 
 ### Added

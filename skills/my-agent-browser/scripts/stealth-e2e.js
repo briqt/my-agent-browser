@@ -10,13 +10,25 @@
 //
 // Run: node skills/my-agent-browser/scripts/stealth-e2e.js
 
-const { spawn } = require("child_process");
+const { spawn, execFileSync } = require("child_process");
+const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
+const { McpSession } = require("./mcp-session");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
 const START_MCP = path.join(__dirname, "start-mcp.js");
-const PORT = 39901;
+let PORT;
+async function freePort() {
+  const server = require("node:net").createServer();
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+  const port = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}
+const INITIALIZE = { protocolVersion: "2024-11-05", capabilities: {},
+  clientInfo: { name: "stealth-e2e", version: "1.0.0" } };
 
 const TRAP_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Trap</title></head>
@@ -79,10 +91,12 @@ function textOf(response) {
 }
 
 async function runOnce({ stealthEnabled, trapUrl, lazyStart = true, backgroundNewPages = false }) {
+  PORT = await freePort();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "mab-e2e-"));
   fs.writeFileSync(
     path.join(home, "config.json"),
     JSON.stringify({
+      disable_update_check: true,
       browser: {
         userDataDir: path.join(home, "user-data"),
         headless: true,
@@ -109,6 +123,15 @@ async function runOnce({ stealthEnabled, trapUrl, lazyStart = true, backgroundNe
       clientInfo: { name: "stealth-e2e", version: "1.0.0" },
     });
     rpc.notify("notifications/initialized", {});
+    const tools = await rpc.request("tools/list", {});
+    assert.equal(tools.error, undefined);
+    const byName = new Map(tools.result.tools.map(tool => [tool.name, tool]));
+    for (const name of ["take_snapshot", "evaluate_script", "click", "navigate_page"]) {
+      assert.equal(byName.get(name).inputSchema.properties.pageId.type, "number");
+      assert.ok(byName.get(name).inputSchema.required.includes("pageId"));
+    }
+    assert.equal(byName.get("new_page").inputSchema.properties.background.type, "boolean");
+    console.log(`✔ upstream tool schemas (${byName.size} tools, numeric pageId)`);
 
     const opened = await rpc.request("tools/call", {
       name: "new_page",
@@ -132,7 +155,7 @@ async function runOnce({ stealthEnabled, trapUrl, lazyStart = true, backgroundNe
       arguments: { pageId, function: "() => JSON.stringify(window.__log)" },
     });
 
-    // MCP 1.11 has classic-script and local-file modes. Neither may be rewritten
+    // MCP 1.12 has classic-script and local-file modes. Neither may be rewritten
     // into a callable function or bypass the upstream filesystem checks.
     const classic = await rpc.request("tools/call", {
       name: "evaluate_script",
@@ -149,12 +172,84 @@ async function runOnce({ stealthEnabled, trapUrl, lazyStart = true, backgroundNe
     if (fileSource.error || fileSource.result?.isError || !textOf(fileSource).includes("43")) {
       throw new Error("local-file source mode failed: " + textOf(fileSource));
     }
-    console.log("✔ MCP 1.11 classic-script and file-source modes");
+    console.log("✔ MCP 1.12 classic-script and file-source modes");
+    if (!lazyStart) await checkDirectAndRecovery(home, pageId);
     return textOf(dump);
   } finally {
     try { child.kill("SIGTERM"); } catch {}
     await new Promise((r) => setTimeout(r, 1500));
     try { fs.rmSync(home, { recursive: true, force: true }); } catch {}
+  }
+}
+
+async function checkDirectAndRecovery(home, pageId) {
+  const directHome = path.join(home, "direct");
+  fs.mkdirSync(directHome);
+  fs.writeFileSync(path.join(directHome, "config.json"), JSON.stringify({
+    disable_update_check: true, browser: { browserUrl: `http://127.0.0.1:${PORT}` },
+    mcp: { backgroundNewPages: true, flags: ["--no-usage-statistics", "--no-performance-crux"] },
+  }));
+  const child = spawn(process.execPath, [START_MCP], { stdio: ["pipe", "pipe", "inherit"],
+    env: { ...process.env, MY_AGENT_BROWSER_HOME: directHome } });
+  try {
+    const rpc = jsonRpc(child);
+    await rpc.request("initialize", INITIALIZE);
+    rpc.notify("notifications/initialized", {});
+    const bad = await rpc.request("tools/call", { name: "take_snapshot", arguments: { pageId: String(pageId) } });
+    assert.ok(bad.error || bad.result?.isError, "string pageId must be rejected upstream");
+    const good = await rpc.request("tools/call", { name: "take_snapshot", arguments: { pageId } });
+    assert.ok(!good.error && !good.result?.isError, textOf(good));
+    const opened = await rpc.request("tools/call", { name: "new_page", arguments: { url: "about:blank" } });
+    assert.ok(!opened.error && !opened.result?.isError, textOf(opened));
+    const newId = Number(textOf(opened).match(/^(\d+):.*\[selected\]/m)?.[1]);
+    assert.ok(Number.isFinite(newId));
+    await rpc.request("tools/call", { name: "close_page", arguments: { pageId: newId } });
+    console.log("✔ direct mode: numeric pageId validation, snapshot and background new_page");
+  } finally { child.kill("SIGTERM"); }
+
+  // Inject the recovery trigger at the session boundary while using real MCP children.
+  // This validates replacement handshakes/no replay, not occurrence of a stale-state bug.
+  const doctor = JSON.parse(execFileSync(process.execPath, [START_MCP, "--doctor", "--json"], {
+    encoding: "utf8", env: { ...process.env, MY_AGENT_BROWSER_HOME: directHome },
+  }));
+  assert.equal(doctor.mcpVersion, require("../version.json").tested_mcp_version);
+  const children = [];
+  let injected = false;
+  const session = new McpSession({
+    spawnChild: () => {
+      const child = spawn(process.execPath, [fs.realpathSync(doctor.mcpPath), `--browserUrl=http://127.0.0.1:${PORT}`,
+        "--no-usage-statistics", "--no-performance-crux"], {
+        stdio: ["pipe", "pipe", "inherit"],
+        env: { ...process.env, NO_PROXY: "localhost,127.0.0.1", no_proxy: "localhost,127.0.0.1" },
+      });
+      children.push(child);
+      return child;
+    },
+    shouldRecover: line => {
+      if (!injected && line.includes("RECOVER_AFTER_MUTATION")) { injected = true; return true; }
+      return false;
+    },
+  });
+  const stdout = new EventEmitter();
+  session.on("line", line => stdout.emit("data", Buffer.from(line + "\n")));
+  let recoveryError;
+  session.on("error", error => { recoveryError = error; });
+  const rpc = jsonRpc({ stdout, stdin: { write: line => session.write(line.trimEnd()) } });
+  try {
+    await rpc.request("initialize", INITIALIZE);
+    rpc.notify("notifications/initialized", {});
+    const failed = await rpc.request("tools/call", { name: "evaluate_script", arguments: { pageId,
+      function: '() => { window.__recoveryCount = (window.__recoveryCount || 0) + 1; return "RECOVER_AFTER_MUTATION"; }' } });
+    assert.equal(failed.result.isError, true);
+    const count = await rpc.request("tools/call", { name: "evaluate_script", arguments: { pageId,
+      function: '() => "recovery-count=" + window.__recoveryCount' } });
+    assert.equal(recoveryError, undefined);
+    assert.match(textOf(count), /recovery-count=1/);
+    assert.equal(children.length, 2);
+    console.log("✔ real MCP replacement reinitializes and never replays the completed mutation");
+  } finally {
+    session.end();
+    for (const child of children) child.kill("SIGTERM");
   }
 }
 

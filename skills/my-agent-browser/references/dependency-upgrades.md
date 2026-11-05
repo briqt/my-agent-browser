@@ -1,20 +1,54 @@
 # Browser dependency compatibility
 
-Verified 2026-10-22: wrapper **1.3.0** with **chrome-devtools-mcp 1.11.0** on
-macOS and Node 24. The 30 unit/documentation/recovery tests and isolated headless
-browser checks passed, including lazy/eager startup with background defaults on,
-script rewriting enabled/disabled, classic scripts and local file sources.
-These headless checks do not validate macOS GUI focus behavior.
-Install the pinned dependency with:
+Verified 2026-11-05: wrapper **1.4.0** with **chrome-devtools-mcp 1.12.0**,
+Node **24.15.0**, npm **11.12.1**, Microsoft Edge **156.0.4314.58** on macOS.
+The upstream npm `latest` tag and latest GitHub release both resolve to 1.12.0.
+Install the tested dependency with:
 
 ```bash
-npm install -g chrome-devtools-mcp@1.11.0
+npm install -g chrome-devtools-mcp@1.12.0
 node <skill-dir>/scripts/start-mcp.js --doctor --json
 ```
 
 MCP requires Node 20.19+ on 20.x, 22.12+ on 22.x, or 23+. Node 24 LTS is recommended.
-The doctor reports the installed MCP path/version and whether it matches the tested
-version. The wrapper's npx fallback uses this same version rather than a moving tag.
+`version.json` supplies the wrapper version and tested MCP version. Doctor reports
+the actual installed binary/version; the npx fallback is pinned to the tested version.
+An existing PATH binary is not silently upgraded or replaced.
+
+## 1.12 compatibility and validation
+
+- Ran `node --test skills/my-agent-browser/scripts/*.test.js`, covering request
+  rewriting, transport recovery, documentation examples and update-check behavior.
+- Installed MCP 1.12.0 in an isolated temporary npm prefix and ran `stealth-e2e.js`
+  with that prefix first on PATH. No global MCP installation or personal browser
+  profile was changed.
+- Real-browser checks passed: lazy/eager managed modes, direct mode, numeric pageId
+  rejection/acceptance, live tool schemas (32 default tools), background new pages,
+  inline function stack hiding with a non-vacuous control, classic scripts and file sources.
+- A controlled recovery trigger with real MCP child processes reinitialized the
+  replacement and proved a completed page mutation was not replayed. This tests
+  the recovery mechanism, not spontaneous occurrence of an upstream stale-state bug.
+- `skills` **1.7.6** local-source copy installation preserved version metadata,
+  scripts, references and templates. This checks packaging, not remote publication.
+- These headless checks do not validate GUI focus, Windows/Linux behavior or every
+  upstream feature. The user's already-running sessions were not restarted.
+
+1.12 retains the wrapper's script/background seams. It also adds independent-call
+and per-page concurrency, deferred focus emulation, failed-new-page cleanup, bounded
+snapshot/body waits and upstream config watching. Cross-page concurrency is not a
+compound-action API and does not synchronize separate MCP processes.
+
+`--watchConfig` applies to an upstream `--config` file, not wrapper settings.
+Browser launch/connection settings still need a restart. Hot-reloaded URL
+restrictions do not detach already-attached targets.
+
+`--slim` remains valid for `chrome-devtools-mcp`; the release's CLI restriction is
+for `chrome-devtools start`. Slim's `navigate`/`evaluate`/`screenshot` tools omit
+normal pageId routing and do not use this wrapper's `evaluate_script` or `new_page`
+rewrites. Prefer the normal tool set for this skill's workflow.
+
+Prior baseline: wrapper 1.3.0 / MCP 1.11.0 was tested on 2026-10-22. There was no
+record of testing and rejecting 1.12; the new evidence supersedes that baseline.
 
 ## Wrapper 1.3.0: background new pages
 
@@ -31,8 +65,8 @@ version. The wrapper's npx fallback uses this same version rather than a moving 
   is not OS foreground focus. Route page tools directly with `pageId`.
 
 Default and opt-in config examples are in [setup.md](setup.md). Direct mode
-shares the same request pipeline; the real-browser checks above cover managed
-lazy/eager startup, not a separate direct-mode GUI test.
+shares the same request pipeline and is included in the headless checks above.
+None of these tests is a GUI focus guarantee.
 
 ## Changes followed in 1.11
 
@@ -63,6 +97,7 @@ Check the upstream release notes and CLI help, then run the wrapper's tests and
 profiles and exercises lazy/eager startup, inline functions, classic scripts and
 local source files. Existing browser profiles/configs are not migrated automatically.
 
-Primary sources: [1.11.0 release notes](https://github.com/ChromeDevTools/chrome-devtools-mcp/releases/tag/chrome-devtools-mcp-v1.11.0),
+Primary sources: [1.12.0 release notes](https://github.com/ChromeDevTools/chrome-devtools-mcp/releases/tag/chrome-devtools-mcp-v1.12.0),
+[1.11.0 release notes](https://github.com/ChromeDevTools/chrome-devtools-mcp/releases/tag/chrome-devtools-mcp-v1.11.0),
 [tool documentation](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.11.0/docs/tool-reference.md),
 and the installed package's `--help` and `tools/script.js` schema.
