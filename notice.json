@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "latest_version": "1.4.0",
-  "release_url": "https://github.com/briqt/my-agent-browser/releases/tag/v1.4.0",
-  "notice_id": "",
-  "notice": ""
+  "latest_version": "1.5.0",
+  "release_url": "https://github.com/briqt/my-agent-browser/releases/tag/v1.5.0",
+  "notice_id": "v1.5.0-batch-actions",
+  "notice": "新增 run_actions：一次调用顺序执行已知浏览器动作，遇错或页面变化停止。更新 Skill 后重启 MCP；依赖仍为 chrome-devtools-mcp 1.12.0。"
 }
