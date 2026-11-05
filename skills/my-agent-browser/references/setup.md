@@ -108,6 +108,7 @@ Edit `~/.config/agent-skills/my-agent-browser/config.json`:
 | `browser.debuggingPort` | Chrome remote debugging port | `39813` |
 | `browser.browserUrl` | Connect to an existing Chrome instance instead of launching one (e.g. `http://127.0.0.1:9222`). When set, `headless`/`userDataDir`/`extraArgs` are ignored | `""` (launch new) |
 | `browser.extraArgs` | Additional Chrome command-line flags (see below) | `[]` |
+| `mcp.batchActions` | Expose bounded `run_actions` on the tested MCP version; enables upstream structured results for boundary detection. Restart to apply | `true` |
 | `mcp.backgroundNewPages` | Wrapper boolean: only strict `true` supplies `background: true` for `new_page` calls that omit `background`; explicit `true`/`false` is respected. Omitted/`false` preserves upstream behavior | `false` |
 | `mcp.features` / `mcp.flags` | Both are passthrough arrays of CLI flags for `chrome-devtools-mcp`. Merged and forwarded as-is; the split is only cosmetic. See "Tuning the tool set" below | `[]` |
 | `stealth.evaluateScript` | Rewrite `evaluate_script` so page-visible stack traces carry no `pptr:` marker and no MCP install path (that path usually contains your OS username). See [anti-detection.md](anti-detection.md) | `true` |
@@ -336,3 +337,6 @@ see [dependency-upgrades.md](dependency-upgrades.md).
 
 For wrapper update notifications, explicit checks, disabling checks, development
 config selection and cache behavior, see [update-checks.md](update-checks.md).
+
+For compound actions, supported tools, partial results and same-session exclusion,
+see [batch-actions.md](batch-actions.md).

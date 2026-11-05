@@ -136,3 +136,21 @@ Set in config (`~/.config/agent-skills/my-agent-browser/config.json`):
 ```
 
 Restart the agent session for config changes to take effect.
+
+## Batch actions
+
+- Missing `run_actions`: run `--doctor --json`. Install wrapper 1.5.0 and tested MCP
+  1.12.0, enable `mcp.batchActions`, remove slim/disabled pageId routing if applicable,
+  and restart the MCP session. Skill installation does not update the MCP dependency.
+- `rejected` / `dispatched: 0`: fix the plan shape or missing upstream capabilities;
+  no requested action ran. A bad later argument rejects the whole plan up front.
+- `interrupted`: a dialog/reconnect or potentially partial fill_form crossed a page
+  boundary. Observe, handle the dialog explicitly if needed, then plan remaining work.
+- `unknown` / `settling: true`: the action may still execute. Do not resend it. Wait
+  for upstream settlement; if stuck, restart the MCP session and inspect before continuing.
+- `missing_boundary_signals`: the current action may have run but structured signals
+  are absent. Stop and inspect; verify the tested upstream version/config and restart.
+- `snapshot.status: failed` with completed steps: do not repeat those actions. Read
+  the page using a separate snapshot, preferably file-backed for heavy pages.
+
+The full contract is in [batch-actions.md](batch-actions.md).

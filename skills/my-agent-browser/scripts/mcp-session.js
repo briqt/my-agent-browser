@@ -65,11 +65,12 @@ class McpSession extends EventEmitter {
     });
   }
 
-  fail(request, message) {
+  fail(request, message, recovery = false) {
     if (request?.id == null) return;
     const reply = { jsonrpc: "2.0", id: request.id };
     if (request.method === "tools/call") reply.result = { isError: true, content: [{ type: "text", text: message }] };
     else reply.error = { code: -32000, message };
+    if (recovery && reply.result) reply.result._meta = { "my-agent-browser/recovery": true };
     this.emit("line", JSON.stringify(reply));
   }
 
@@ -94,8 +95,8 @@ class McpSession extends EventEmitter {
     if (response.id != null) this.pending.delete(response.id);
     if (!this.recovering && request && this.initialize && this.shouldRecover(line)) {
       const message = "MCP state was lost. This request was not replayed. Verify the result before retrying a mutation; refresh page IDs and snapshots after recovery.";
-      this.fail(request, message);
-      for (const outstanding of this.pending.values()) this.fail(outstanding, message);
+      this.fail(request, message, true);
+      for (const outstanding of this.pending.values()) this.fail(outstanding, message, true);
       this.pending.clear();
       this.recover();
       return;

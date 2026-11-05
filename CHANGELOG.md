@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.5.0 — 2026-11-05
+
+- Add `run_actions`: up to 10 sequential known actions on one page, with a terminal
+  click/key and optional final/file snapshot. Default enabled on tested MCP 1.12.0;
+  disable with `mcp.batchActions: false` and restart.
+- Prevalidate all supported parameter shapes; stop on errors/dialogs/navigation/new
+  pages, preserve partial results, never replay or roll back actions.
+- Keep same-session tools excluded while timed-out/cancelled actions settle. Flush
+  partial reports before transport exit; final snapshot failures retain action status.
+- Enable upstream structured results for boundary detection; fail closed if missing.
+  Discover live capabilities per batch and retain upstream workspace restrictions.
+- Update Skill guidance for stable batches, accurate UID lifetime and partial-result
+  recovery; add unit/process tests and isolated browser scenarios.
+
 ## v1.4.0 — 2026-11-05
 
 - Pin the tested/fallback MCP dependency to 1.12.0; document upstream concurrency,

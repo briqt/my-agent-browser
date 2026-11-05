@@ -119,3 +119,30 @@ test("replacement forwards roots replies during initialize and preserves client 
   f.reply(child, { id: child.writes[0].id, result: { capabilities: {} } });
   f.session.end();
 });
+
+test("compound actions preserve partial results across real session replacement without replay", async () => {
+  const { BatchSession } = require("./batch-session");
+  const f = fixture();
+  const batch = new BatchSession(f.session), output = [];
+  batch.on("line", line => output.push(JSON.parse(line)));
+  batch.on("error", () => {});
+  batch.write(JSON.stringify({ id: 100, method: "tools/call", params: { name: "run_actions", arguments: {
+    pageId: 1, actions: [1, 2, 3].map(i => ({ tool: "fill", arguments: { uid: `1_${i}`, value: "private" } })),
+  } } }));
+  const child = f.children[0];
+  f.reply(child, { id: child.writes.at(-1).id, result: { tools: [{ name: "fill", inputSchema: { type: "object",
+    required: ["pageId", "uid", "value"], properties: { pageId: { type: "number" }, uid: { type: "string" }, value: { type: "string" } },
+  } }] } });
+  await new Promise(setImmediate);
+  f.reply(child, { id: child.writes.at(-1).id, result: { content: [], structuredContent: {} } });
+  await new Promise(setImmediate);
+  f.reply(child, { id: child.writes.at(-1).id, result: { isError: true, content: [{ type: "text", text: "TEST_STALE" }] } });
+  await new Promise(setImmediate);
+  assert.equal(output.length, 1);
+  assert.equal(output[0].id, 100);
+  assert.deepEqual(output[0].result.structuredContent.steps.map(s => s.status), ["completed", "unknown", "not_run"]);
+  const replacement = f.children[1];
+  f.reply(replacement, { id: replacement.writes[0].id, result: { capabilities: {} } });
+  assert.ok(!replacement.writes.some(r => r.method === "tools/call"));
+  batch.end();
+});

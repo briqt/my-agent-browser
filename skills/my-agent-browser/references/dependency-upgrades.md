@@ -1,6 +1,6 @@
 # Browser dependency compatibility
 
-Verified 2026-11-05: wrapper **1.4.0** with **chrome-devtools-mcp 1.12.0**,
+Verified 2026-11-05: wrapper **1.5.0** with **chrome-devtools-mcp 1.12.0**,
 Node **24.15.0**, npm **11.12.1**, Microsoft Edge **156.0.4314.58** on macOS.
 The upstream npm `latest` tag and latest GitHub release both resolve to 1.12.0.
 Install the tested dependency with:
@@ -15,15 +15,31 @@ MCP requires Node 20.19+ on 20.x, 22.12+ on 22.x, or 23+. Node 24 LTS is recomme
 the actual installed binary/version; the npx fallback is pinned to the tested version.
 An existing PATH binary is not silently upgraded or replaced.
 
+## Wrapper 1.5.0 batching
+
+The tested MCP dependency remains 1.12.0. `run_actions` relies on its structured
+interruption fields, so the wrapper enables `--experimentalStructuredContent=true`
+when batching is enabled. Other installed MCP versions keep native tools only.
+Existing config files require no migration; `mcp.batchActions: false` opts out.
+Update the Skill and restart the MCP session; updating npm alone does not add this tool.
+
+`batch-e2e.js` verifies stable forms, upfront rejection, DOM replacement, dialog
+interruption and terminal navigation on isolated local pages. Unit/process tests
+cover cancellation, late settlement, recovery and flushing partial results at exit.
+Compound actions also passed in eager and direct modes; the copied installation
+passed 58 tests (the repository-only feed check is skipped) and batch browser checks.
+Batching reduces outer calls for known segments, not the number of actual browser
+operations; no model token/latency benchmark is claimed.
+
 ## 1.12 compatibility and validation
 
-- Ran `node --test skills/my-agent-browser/scripts/*.test.js`, covering request
+- All **59** tests passed with `node --test skills/my-agent-browser/scripts/*.test.js`, covering request
   rewriting, transport recovery, documentation examples and update-check behavior.
 - Installed MCP 1.12.0 in an isolated temporary npm prefix and ran `stealth-e2e.js`
   with that prefix first on PATH. No global MCP installation or personal browser
   profile was changed.
 - Real-browser checks passed: lazy/eager managed modes, direct mode, numeric pageId
-  rejection/acceptance, live tool schemas (32 default tools), background new pages,
+  rejection/acceptance, live native tool schemas (32 upstream tools, plus wrapper run_actions when enabled), background new pages,
   inline function stack hiding with a non-vacuous control, classic scripts and file sources.
 - A controlled recovery trigger with real MCP child processes reinitialized the
   replacement and proved a completed page mutation was not replayed. This tests

@@ -94,7 +94,7 @@ what is left — remaining ids are **not** renumbered.
 ## Important: Tab-Scoped State
 
 - **Snapshots** are per-tab. A snapshot from pageId 1 does not apply to pageId 2.
-- **UIDs** are per-tab and per-snapshot. Never use a UID from one tab on another.
+- **UIDs** identify observed nodes in one tab. Unchanged nodes may retain IDs across snapshots; replaced nodes or documents do not. Never use a UID from another tab.
 - Targeting is by pageId, not by "whatever is selected". After opening a second
   tab, keep using each tab's own pageId.
 
@@ -155,3 +155,11 @@ take_snapshot { pageId: listingId }
 
 This pattern never navigates away from the listing page, so you do not lose
 your place or need to re-navigate.
+
+## Batches and shared browsers
+
+`run_actions` targets exactly one numeric pageId and blocks other tools in its own
+MCP session until completion/settlement. It does not lock that tab against other MCP
+sessions or a human using Chrome. Assign separate tabs to independent Agents. See
+[batch-actions.md](batch-actions.md); do not use a batch to switch tabs or traverse
+unknown navigation steps.

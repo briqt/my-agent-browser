@@ -2,7 +2,7 @@
 
 调研日期：2026-11-05。读取了官方文档、源码和测试，未运行竞品、未测量 token
 或延迟收益。以下 main 分支证据已固定到 commit，不意味着对应能力都进入了稳定版。
-本次仅调研，未增加批处理工具，也未放宽现有 Skill 的动作执行规则。
+初轮调研没有增加批处理工具；后续实施决策与验证记录见文末。
 
 ## 已有实现
 
@@ -62,3 +62,30 @@
 合并 k 个确定步骤理论上可减少 k−1 次外层推理往返，但不减少必要的浏览器等待，且额外
 快照、失败重试或内部模型调用可能抵消收益。下一步应先选一个本地稳定表单原型验证，再
 决定是否承担跨页面、运行时 locator 或可编程执行器的复杂度。
+
+## 后续实施：1.5.0
+
+采用同页声明式串行方案，初版只允许 fill、fill_form、hover，click/press_key 只能最后。
+没有引入宿主 JS、脚本执行器、跨页链、任意工具批量调用或新的模型依赖。每批检查实际
+上游工具集合，先校验所有支持的参数形状；运行时元素状态仍交给上游检查。
+
+补读上游 v1.12.0 源码后修正了三个判断：
+
+- [TextSnapshot](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.12.0/src/TextSnapshot.ts#L82)
+  用 loaderId/backendNodeId 复用未变节点的 UID，不能说每次快照都让所有旧 UID 失效。
+- [input 工具](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.12.0/src/tools/input.ts)
+  中 fill_form 遇到 dialog 可返回普通成功结果，但剩余字段未填；必须检查边界信号。
+- [ToolHandler](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.12.0/src/ToolHandler.ts)
+  默认会丢弃 structuredContent。真实浏览器测试重现了漏判，修复为启用批处理时强制
+  `--experimentalStructuredContent=true`，信号缺失则停止继续派发。这个 flag 是当前
+  实测版本的实验能力，因此对其它版本不自动启用 wrapper 批处理。
+
+独立审阅还发现并修复了：进程退出抢在异步批处理部分结果之前；正常末尾导航被误判成
+失败并跳过快照。最终区分成功导航与 dialog/部分填表，超时后保留当前调用的会话占用，
+不认为客户端超时就代表浏览器动作已停止。
+
+验证采用本地页面：稳定表单、后续参数无效时零执行、填表重建 DOM、部分填表弹窗、
+末尾点击导航。稳定表单的 3 个动作和最终快照可在 1 个外层调用完成；这是调用数验证，
+不是 token/延迟基准，不报告未测量的推理成本降幅。更多超时、取消、晚到响应、重启与
+进程退出边界由确定性单元/进程测试覆盖。对外契约见
+[batch-actions.md](../skills/my-agent-browser/references/batch-actions.md)。

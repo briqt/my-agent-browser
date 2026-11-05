@@ -8,6 +8,7 @@ const http = require("http");
 const { execFileSync, spawn } = require("child_process");
 
 const { McpSession } = require("./mcp-session.js");
+const { BatchSession } = require("./batch-session.js");
 const { version: VERSION, tested_mcp_version: MCP_VERSION } = require("../version.json");
 const { checkUpdate } = require("./update-check.js");
 const SKILL_NAME = "my-agent-browser";
@@ -379,6 +380,10 @@ function localBrowserUrl(port) {
   return `http://127.0.0.1:${port}`;
 }
 
+function exitAfterOutput(code) {
+  process.stdout.write("", () => process.exit(code));
+}
+
 // --- Stealth: keep automation traces out of page-visible stack traces ---
 
 // puppeteer tags every script it evaluates with `//# sourceURL=pptr:...`, and that
@@ -489,12 +494,20 @@ function startMcp(args, { pipe = false } = {}) {
 // Run the MCP child with its stdio proxied, so client→server lines pass through
 // rewriteClientRequest. Shared by lazy, eager and direct connection modes.
 function createMcpSession(args, config, shouldRecover = responseHasStaleStateError) {
-  return new McpSession({
-    spawnChild: () => startMcp(args, { pipe: true }),
+  const binary = findMcpBin();
+  const compatible = !binary || findMcpVersion(binary) === MCP_VERSION;
+  const batch = config.mcp?.batchActions !== false && compatible;
+  // Required for distinguishing partial fill_form/dialog results from success.
+  const effectiveArgs = batch ? [...args, "--experimentalStructuredContent=true"] : args;
+  const raw = new McpSession({
+    spawnChild: () => startMcp(effectiveArgs, { pipe: true }),
     rewriteLine: line => rewriteClientRequest(line, config),
     shouldRecover,
     log: message => process.stderr.write(`[my-agent-browser] ${message}\n`),
   });
+  // The compound tool relies on 1.12 structured interruption signals. A different
+  // installed binary keeps its native tools until explicitly upgraded and tested.
+  return batch ? new BatchSession(raw) : raw;
 }
 
 function startMcpProxied(args, config) {
@@ -675,6 +688,12 @@ function startLazy(config, port) {
     finally { relaunching = false; }
   }
 
+  session.on("internalResponse", line => {
+    if (state === "ready" && responseHasChromeError(line)) {
+      void probePort(port, 1500).then(alive => { if (!alive) return relaunchChrome(); });
+    }
+  });
+
   function handleLine(line) {
     if (state === "ready") { session.write(line); return; }
     if (state === "failed") { sendMcpError(line, launchError); return; }
@@ -775,6 +794,7 @@ function printDoctor() {
       validateConfig(cfg);
     }
     report.mode = cfg.browser?.browserUrl ? "direct" : cfg.browser?.lazyStart === false ? "eager" : "lazy";
+    report.batchActionsEnabled = cfg.mcp?.batchActions !== false && (!report.mcpPath || report.mcpMatchesTestedVersion);
   } catch (error) { report.configError = error.message; process.exitCode = 1; }
   console.log(JSON.stringify(report, null, process.argv.includes("--json") ? undefined : 2));
 }
@@ -820,9 +840,9 @@ notifications use stderr only. Config disable_update_check also disables explici
     const child = startMcpProxied(args, config);
     child.on("error", (err) => {
       process.stderr.write(`[my-agent-browser] spawn error: ${err.message}\n`);
-      process.exit(1);
+      exitAfterOutput(1);
     });
-    child.on("exit", (code) => process.exit(code ?? 1));
+    child.on("exit", (code) => exitAfterOutput(code ?? 1));
     return;
   }
 
@@ -852,11 +872,11 @@ notifications use stderr only. Config disable_update_check also disables explici
   child.on("error", (err) => {
     process.stderr.write(`[my-agent-browser] spawn error: ${err.message}\n`);
     cleanup();
-    process.exit(1);
+    exitAfterOutput(1);
   });
   child.on("exit", (code) => {
     cleanup();
-    process.exit(code ?? 1);
+    exitAfterOutput(code ?? 1);
   });
 }
 

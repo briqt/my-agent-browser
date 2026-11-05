@@ -174,6 +174,23 @@ The bundled SKILL.md provides workflow guidance so agents avoid common pitfalls:
 └── README_CN.md
 ```
 
+## Multiple actions in one call (v1.5.0)
+
+`run_actions` executes up to 10 known actions sequentially on one observed, stable
+page. It supports `fill`, `fill_form`, `hover`, and a terminal `click` / `press_key`,
+with an optional final snapshot or snapshot file. Prefer native `fill_form` when
+filling several fields is the entire task.
+
+The wrapper validates all supported parameter shapes before dispatch, stops on
+errors/page boundaries and returns per-step status. Timeout/cancellation does not
+prove the current action stopped: no replay or rollback is attempted, and other
+same-session tools stay excluded until it settles. Separate sessions still need
+separate tabs to avoid interference.
+
+`mcp.batchActions` defaults to enabled on tested MCP **1.12.0** and automatically
+enables upstream structured results. Set it to `false` to disable; restart the MCP
+session after upgrading. See the [batch contract and recovery guide](skills/my-agent-browser/references/batch-actions.md).
+
 ## Update checks and notices (v1.4.0)
 
 The MCP wrapper checks for project updates asynchronously without blocking startup.

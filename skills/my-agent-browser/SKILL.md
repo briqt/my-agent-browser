@@ -14,7 +14,7 @@ description: >
 
 Browser automation for AI agents via `chrome-devtools-mcp` MCP server.
 
-Release **1.4.0**, tested with **chrome-devtools-mcp 1.12.0**. Node 24 LTS is recommended. Check the installed wrapper without launching Chrome:
+Release **1.5.0**, tested with **chrome-devtools-mcp 1.12.0**. Node 24 LTS is recommended. Check the installed wrapper without launching Chrome:
 
 ```bash
 node <skill-dir>/scripts/start-mcp.js --doctor --json
@@ -56,8 +56,8 @@ See [update-checks.md](references/update-checks.md) for cache, publishing and up
 1. `list_pages` or `new_page { url }` — get a numeric **pageId** (required on every page-scoped tool; use `2`, not `"2"`)
 2. `navigate_page { pageId, url }` — go to a page (skip if you just used `new_page`)
 3. `take_snapshot { pageId }` — read the page structure with uid refs
-4. `click { pageId, uid }` / `fill { pageId, uid, value }` / `press_key { pageId, key }` — interact
-5. `take_snapshot { pageId }` again — uids change after every page mutation
+4. For known stable steps, prefer `fill_form` or `run_actions` (below); otherwise use one native interaction.
+5. Read the result; take a fresh snapshot after navigation, element replacement or any new decision point. A snapshot alone does not invalidate all UIDs.
 
 ## Reading Snapshots
 
@@ -118,10 +118,51 @@ These tool groups are **available by default** — no flags needed. See [referen
 ## Key Rules
 
 - **Always pass numeric `pageId`** — For example, `take_snapshot { pageId: 2 }`, never `pageId: "2"`. Chrome DevTools MCP requires it on page-scoped tools (`click`, `fill`, `take_snapshot`, `navigate_page`, `evaluate_script`, `wait_for`, …). Get it from `list_pages` or `new_page`. No preceding `select_page` is needed; logical selection is not OS foreground focus.
-- **UIDs are ephemeral** — After any navigation or interaction that changes the page, previous UIDs are invalid. Always `take_snapshot { pageId }` again before the next interaction.
+- **UIDs identify observed elements** — Unchanged nodes can keep their UIDs across snapshots. Navigation or replaced elements can invalidate them; UIDs do not re-locate a new element with the same label. Observe again when identity or meaning may have changed.
 - **Use `fill` for inputs** — It targets a specific element and clears first. `type_text` types at whatever is focused, which is fragile.
-- **One action, then re-read** — Don't batch multiple actions without re-snapshotting. The first action may invalidate subsequent UIDs.
+- **Batch only known stable segments** — Use `run_actions` when all targets are already observed and no intermediate result needs a decision. Dynamic/uncertain flows remain action → observe → decide. Never replay a stopped batch wholesale.
 - **Heavy pages: use file-based snapshots** — See below.
+
+## Known-step batches (wrapper 1.5.0)
+
+Prefer native `fill_form` for multiple fields. To also include a terminal click/key,
+or combine several known actions, use `run_actions`. For example, after observing
+page 2 and these exact UIDs:
+
+```json
+{
+  "pageId": 2,
+  "actions": [
+    {"tool": "fill", "arguments": {"uid": "1_7", "value": "example"}},
+    {"tool": "click", "arguments": {"uid": "1_12"}}
+  ],
+  "snapshot": "final"
+}
+```
+
+Supports `fill`, `fill_form`, `hover`, plus `click` / `press_key` **only last**.
+Maximum 10 steps on one page; no scripts, navigation chains or nested batches.
+The wrapper validates all parameter shapes before dispatch, but cannot guarantee
+that future elements stay valid. Stops on errors, dialogs, navigation or new pages.
+A successful last click may navigate and return the requested final snapshot.
+
+Read per-step `completed / failed / interrupted / unknown / not_run` and the
+separate `snapshot.status`. Completed actions stay completed if the snapshot fails.
+Timeout/cancellation means the current action may still run: do not retry it. Other
+tool calls in this session remain blocked until it settles; if stuck, restart the
+MCP session, then inspect the page before deciding what remains. No rollback or replay.
+
+Snapshots default to `none`; request `final` only when useful. For heavy pages add
+`snapshotFilePath` and read just the needed file section. Step reports omit input
+values, but a requested snapshot can contain page/form data. Other Agents sharing
+Chrome can still interfere; use separate tabs and do not assume cross-session isolation.
+
+Requires the updated wrapper, tested MCP **1.12.0** and normal numeric pageId tools.
+`mcp.batchActions` defaults to `true`; set `false` and restart to opt out. The wrapper
+enables upstream structured results for interruption detection. If `run_actions` is
+missing, check `--doctor --json`, update the Skill/MCP separately and restart the
+session; `--slim` / disabled pageId routing do not support this tool.
+See [batch-actions.md](references/batch-actions.md) for the full contract and recovery.
 
 ## Heavy Pages (Critical)
 

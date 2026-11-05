@@ -173,13 +173,33 @@ async function runOnce({ stealthEnabled, trapUrl, lazyStart = true, backgroundNe
       throw new Error("local-file source mode failed: " + textOf(fileSource));
     }
     console.log("✔ MCP 1.12 classic-script and file-source modes");
-    if (!lazyStart) await checkDirectAndRecovery(home, pageId);
+    if (!lazyStart) {
+      await checkBatchTransport(rpc, pageId, "eager");
+      await checkDirectAndRecovery(home, pageId);
+    }
     return textOf(dump);
   } finally {
     try { child.kill("SIGTERM"); } catch {}
     await new Promise((r) => setTimeout(r, 1500));
     try { fs.rmSync(home, { recursive: true, force: true }); } catch {}
   }
+}
+
+async function checkBatchTransport(rpc, pageId, mode) {
+  await rpc.request("tools/call", { name: "evaluate_script", arguments: { pageId,
+    function: '() => { const old = document.getElementById("batch-input"); if (old) old.remove(); const input = document.createElement("input"); input.id = "batch-input"; input.setAttribute("aria-label", "Batch input"); document.body.append(input); }' } });
+  const snapshot = await rpc.request("tools/call", { name: "take_snapshot", arguments: { pageId } });
+  const uid = textOf(snapshot).match(/uid=(\S+) textbox "Batch input"/)?.[1];
+  assert.ok(uid, textOf(snapshot));
+  const response = await rpc.request("tools/call", { name: "run_actions", arguments: {
+    pageId, actions: ["first", "second"].map(value => ({ tool: "fill", arguments: { uid, value } })),
+  } });
+  assert.equal(response.result?.isError, false, textOf(response));
+  assert.equal(response.result.structuredContent.completed, 2);
+  const value = await rpc.request("tools/call", { name: "evaluate_script", arguments: { pageId,
+    function: '() => document.getElementById("batch-input").value' } });
+  assert.match(textOf(value), /second/);
+  console.log(`✔ ${mode} mode executes compound actions through the shared pipeline`);
 }
 
 async function checkDirectAndRecovery(home, pageId) {
@@ -205,6 +225,7 @@ async function checkDirectAndRecovery(home, pageId) {
     assert.ok(Number.isFinite(newId));
     await rpc.request("tools/call", { name: "close_page", arguments: { pageId: newId } });
     console.log("✔ direct mode: numeric pageId validation, snapshot and background new_page");
+    await checkBatchTransport(rpc, pageId, "direct");
   } finally { child.kill("SIGTERM"); }
 
   // Inject the recovery trigger at the session boundary while using real MCP children.
@@ -253,7 +274,7 @@ async function checkDirectAndRecovery(home, pageId) {
   }
 }
 
-(async () => {
+if (require.main === module) (async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mab-trap-"));
   const trapFile = path.join(tmp, "trap.html");
   fs.writeFileSync(trapFile, TRAP_HTML);
@@ -302,3 +323,5 @@ async function checkDirectAndRecovery(home, pageId) {
   console.log(failures === 0 ? "\nall e2e checks passed" : `\n${failures} e2e check(s) failed`);
   process.exit(failures === 0 ? 0 : 1);
 })();
+
+module.exports = { jsonRpc, textOf, freePort };
