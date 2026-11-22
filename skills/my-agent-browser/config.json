@@ -21,14 +21,7 @@
       "--disable-features=TranslateUI"
     ],
     "browserUrl": "",
-    "lazyStart": true,
     "idleTimeout": "30m"
-  },
-  "mcp": {
-    "features": [],
-    "flags": [],
-    "backgroundNewPages": false,
-    "batchActions": true
   },
   "stealth": {
     "evaluateScript": true,

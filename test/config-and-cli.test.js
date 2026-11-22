@@ -5,10 +5,12 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 const {
   parseIdleTimeout,
   validateConfig,
+  resolveEffectiveConfig,
   loadConfig,
   initConfig,
 } = require("../src/config.js");
@@ -19,12 +21,13 @@ const {
 } = require("../src/chrome.js");
 const {
   parseGlobalAndCommandArgs,
+  parseStrictBoolean,
   resolveBuiltinAlias,
   normalizeToolPaths,
   extractRawEvalValue,
+  extractSavedShotPath,
 } = require("../src/cli.js");
 const { validateOwnerName, resolveOwner } = require("../src/protocol.js");
-const { spawnSync } = require("node:child_process");
 
 const CLI_PATH = path.resolve(__dirname, "..", "src", "cli.js");
 
@@ -45,7 +48,7 @@ test("parseIdleTimeout supports ms/s/m/h units and never/0, rejecting ambiguous 
   assert.throws(() => parseIdleTimeout("999999h"), /exceeds maximum timer/);
 });
 
-test("validateConfig accepts legacy v1 configs and v2 idleTimeout", () => {
+test("validateConfig validates slim schema and ignores legacy mcp/lazyStart keys cleanly", () => {
   assert.doesNotThrow(() =>
     validateConfig({
       browser: { headless: true, debuggingPort: 39813, lazyStart: true },
@@ -58,6 +61,13 @@ test("validateConfig accepts legacy v1 configs and v2 idleTimeout", () => {
   assert.doesNotThrow(() => validateConfig({ browser: { idleTimeout: 0 } }));
   assert.throws(() => validateConfig({ browser: { headless: "yes" } }), /config\.browser\.headless must be boolean/);
   assert.throws(() => validateConfig({ browser: { debuggingPort: 70000 } }), /between 1 and 65535/);
+
+  const eff = resolveEffectiveConfig({ browser: { headless: false } });
+  assert.equal(eff.browser.headless, false);
+  assert.equal(eff.browser.idleTimeout, "30m");
+  assert.equal(eff.stealth.evaluateScript, true);
+  assert.equal("mcp" in eff, false);
+  assert.equal("lazyStart" in eff.browser, false);
 });
 
 test("initConfig creates config once and preserves user edits; devConfig requires explicit opt-in", () => {
@@ -67,6 +77,10 @@ test("initConfig creates config once and preserves user edits; devConfig require
     const env = { ...process.env, MY_AGENT_BROWSER_HOME: home };
     const first = initConfig({ env });
     assert.equal(first.created, true);
+    const created = JSON.parse(fs.readFileSync(first.path, "utf8"));
+    assert.equal("mcp" in created, false);
+    assert.equal("lazyStart" in created.browser, false);
+
     fs.writeFileSync(first.path, JSON.stringify({ browser: { headless: false, idleTimeout: "never" } }));
     const second = initConfig({ env });
     assert.equal(second.created, false);
@@ -91,22 +105,27 @@ test("buildChromeArgs never injects bot-fingerprint flags", () => {
   assert.ok(args.includes("--window-size=1280,720"));
 });
 
-test("buildMcpArgs enables structured content and unrestricted paths unless workspace is set", () => {
-  const def = buildMcpArgs({}, "http://127.0.0.1:39813");
-  assert.ok(def.includes("--no-usage-statistics"));
-  assert.ok(def.includes("--no-performance-crux"));
-  assert.ok(def.includes("--experimental-structured-content"));
-  assert.ok(def.includes("--allow-unrestricted-paths"));
+test("buildMcpArgs enables all 50 upstream tools, wsEndpoint auto-detection, and platform workspace", () => {
+  const posix = buildMcpArgs("http://127.0.0.1:39813", { platform: "darwin" });
+  assert.ok(posix.includes("--browserUrl=http://127.0.0.1:39813"));
+  assert.ok(posix.includes("--no-usage-statistics"));
+  assert.ok(posix.includes("--no-performance-crux"));
+  assert.ok(posix.includes("--experimental-structured-content"));
+  assert.ok(posix.includes("--memory-debugging"));
+  assert.ok(posix.includes("--category-network-mocks"));
+  assert.ok(posix.includes("--category-webauthn"));
+  assert.ok(posix.includes("--experimental-vision"));
+  assert.ok(posix.includes("--workspace=/"));
+  assert.ok(!posix.includes("--allow-unrestricted-paths"));
 
-  const withWorkspace = buildMcpArgs({ mcp: { flags: ["--workspace=/tmp/proj"] } }, "http://127.0.0.1:39813");
-  assert.ok(!withWorkspace.includes("--allow-unrestricted-paths"));
-  assert.ok(withWorkspace.includes("--workspace=/tmp/proj"));
+  const win = buildMcpArgs("ws://127.0.0.1:9222/devtools/browser/abc", { platform: "win32" });
+  assert.ok(win.includes("--wsEndpoint=ws://127.0.0.1:9222/devtools/browser/abc"));
+  assert.ok(win.includes("--allow-unrestricted-paths"));
 });
 
-test("resolveMcpPackageFromCommandPath resolves both 1.12 build/ and 1.13 out/Default/gen/ layouts", () => {
+test("resolveMcpPackageFromCommandPath resolves 1.13 out/Default/gen/ layout", () => {
   const prefix = fs.mkdtempSync(path.join(os.tmpdir(), "mab-win-prefix-"));
   try {
-    // Simulate Windows npm prefix with 1.13 GN/Ninja layout
     const shim = path.join(prefix, "chrome-devtools-mcp.cmd");
     fs.writeFileSync(shim, "@ECHO OFF\r\n");
     const pkgDir = path.join(prefix, "node_modules", "chrome-devtools-mcp");
@@ -131,26 +150,44 @@ test("resolveMcpPackageFromCommandPath resolves both 1.12 build/ and 1.13 out/De
   }
 });
 
-test("CLI alias parser normalizes ergonomic commands and preserves string UIDs", () => {
-  const eval1 = parseGlobalAndCommandArgs(["eval", "2", "() => document.title", "--raw", "--owner", "agent-a"]);
+test("CLI alias parser normalizes commands, rejects removed background/batch options, and parses =false strictly", () => {
+  // eval + --wait-for-stable-dom=false must evaluate to boolean false, not true
+  const eval1 = parseGlobalAndCommandArgs(["eval", "2", "() => document.title", "--wait-for-stable-dom=false", "--raw", "--owner", "agent-a"]);
   assert.equal(eval1.globals.raw, true);
   assert.equal(eval1.globals.owner, "agent-a");
   const boundEval1 = resolveBuiltinAlias(eval1.command, eval1.args, eval1.globals);
   assert.deepEqual(boundEval1, {
     tool: "evaluate_script",
-    arguments: { pageId: 2, function: "() => document.title" },
-    isEval: true,
+    arguments: { pageId: 2, function: "() => document.title", waitForStableDom: false },
   });
 
-  // Upstream-style --pageId flag order also works
-  const eval2 = parseGlobalAndCommandArgs(["evaluate_script", "() => 42", "--pageId", "3"]);
-  const boundEval2 = resolveBuiltinAlias(eval2.command, eval2.args, eval2.globals);
-  assert.deepEqual(boundEval2.arguments, { pageId: 3, function: "() => 42" });
+  // open rejects --background and --foreground since background opening is unconditional
+  const openBg = parseGlobalAndCommandArgs(["open", "https://example.com", "--background"]);
+  assert.throws(() => resolveBuiltinAlias(openBg.command, openBg.args, openBg.globals), /Unknown option '--background'/);
+  const openFg = parseGlobalAndCommandArgs(["open", "https://example.com", "--foreground"]);
+  assert.throws(() => resolveBuiltinAlias(openFg.command, openFg.args, openFg.globals), /Unknown option '--foreground'/);
+
+  // batch alias is removed
+  const batchCmd = parseGlobalAndCommandArgs(["batch", "1", "[]"]);
+  assert.equal(resolveBuiltinAlias(batchCmd.command, batchCmd.args, batchCmd.globals), null);
+
+  // click-at coordinate shortcut
+  const ca = parseGlobalAndCommandArgs(["click-at", "1", "120", "340", "--dbl-click=false"]);
+  assert.deepEqual(resolveBuiltinAlias(ca.command, ca.args, ca.globals), {
+    tool: "click_at",
+    arguments: { pageId: 1, x: 120, y: 340, dblClick: false },
+  });
+
+  // reload supports --init-script and --handle-before-unload
+  const rl = parseGlobalAndCommandArgs(["reload", "1", "--ignore-cache=false", "--handle-before-unload", "dismiss", "--init-script", "window.x=1"]);
+  assert.deepEqual(resolveBuiltinAlias(rl.command, rl.args, rl.globals), {
+    tool: "navigate_page",
+    arguments: { pageId: 1, type: "reload", ignoreCache: false, handleBeforeUnload: "dismiss", initScript: "window.x=1" },
+  });
 
   // fill-form key=value pairs preserve numeric-looking UID strings
   const ff = parseGlobalAndCommandArgs(["fill-form", "1", "123=hello=world", "1_9=secret"]);
-  const boundFf = resolveBuiltinAlias(ff.command, ff.args, ff.globals);
-  assert.deepEqual(boundFf, {
+  assert.deepEqual(resolveBuiltinAlias(ff.command, ff.args, ff.globals), {
     tool: "fill_form",
     arguments: {
       pageId: 1,
@@ -163,24 +200,25 @@ test("CLI alias parser normalizes ergonomic commands and preserves string UIDs",
 
   // wait-for variadic texts
   const wf = parseGlobalAndCommandArgs(["wait-for", "1", "Ready", "Loaded", "--visible", "--timeout", "5000"]);
-  const boundWf = resolveBuiltinAlias(wf.command, wf.args, wf.globals);
-  assert.deepEqual(boundWf, {
+  assert.deepEqual(resolveBuiltinAlias(wf.command, wf.args, wf.globals), {
     tool: "wait_for",
     arguments: { pageId: 1, text: ["Ready", "Loaded"], visible: true, timeout: 5000 },
   });
 
   // logpoints --clear sends empty array
   const lp = parseGlobalAndCommandArgs(["logpoints", "1", "--clear"]);
-  const boundLp = resolveBuiltinAlias(lp.command, lp.args, lp.globals);
-  assert.deepEqual(boundLp, {
+  assert.deepEqual(resolveBuiltinAlias(lp.command, lp.args, lp.globals), {
     tool: "set_logpoints",
     arguments: { pageId: 1, logpoints: [] },
   });
 
-  // extractRawEvalValue strips upstream markdown fences
-  const wrapped = 'Script ran on page and returned:\n```json\n{"ok":true}\n```';
-  assert.equal(extractRawEvalValue(wrapped), '{"ok":true}');
+  assert.throws(() => parseStrictBoolean("yes", "visible"), /expects boolean/);
+
+  // extractRawEvalValue & extractSavedShotPath
+  assert.equal(extractRawEvalValue('Script ran on page and returned:\n```json\n{"ok":true}\n```'), '{"ok":true}');
   assert.equal(extractRawEvalValue('Script ran on page and returned:\n```json\n"Example Title"\n```'), "Example Title");
+  assert.equal(extractSavedShotPath({ structuredContent: { savedImages: [{ filePath: "/tmp/a.png" }] } }), "/tmp/a.png");
+  assert.equal(extractSavedShotPath({ text: "Took a screenshot.\nSaved screenshot to /tmp/b.png." }), "/tmp/b.png");
 });
 
 test("owner name validation accepts clean identifiers and rejects unsafe strings", () => {
@@ -192,15 +230,38 @@ test("owner name validation accepts clean identifiers and rejects unsafe strings
   assert.equal(resolveOwner("cli-owner", { MY_AGENT_BROWSER_OWNER: "env-owner" }), "cli-owner");
 });
 
-test("audit regressions: --help stays offline, relative paths normalize to CWD, eval requires pageId, pages --owner filters", () => {
+test("offline --help prints specific help for built-ins and upstream tools without starting daemon; config show works", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "mab-help-"));
   try {
     const env = { ...process.env, MY_AGENT_BROWSER_HOME: home };
-    for (const args of [["stop", "--help"], ["open", "--help"], ["lighthouse_audit", "--help"]]) {
-      const res = spawnSync(process.execPath, [CLI_PATH, ...args], { env, encoding: "utf8" });
-      assert.equal(res.status, 0);
-      assert.match(res.stdout, /Usage:/);
-    }
+
+    const openHelp = spawnSync(process.execPath, [CLI_PATH, "open", "--help"], { env, encoding: "utf8" });
+    assert.equal(openHelp.status, 0);
+    assert.match(openHelp.stdout, /open — Open a URL in a new background tab/);
+    assert.ok(!openHelp.stdout.includes("--background"));
+    assert.ok(!openHelp.stdout.includes("--foreground"));
+
+    const mockHelp = spawnSync(process.execPath, [CLI_PATH, "mock_network", "--help"], { env, encoding: "utf8" });
+    assert.equal(mockHelp.status, 0);
+    assert.match(mockHelp.stdout, /mock_network —/);
+    assert.match(mockHelp.stdout, /--route/);
+
+    const lhHelp = spawnSync(process.execPath, [CLI_PATH, "lighthouse_audit", "--help"], { env, encoding: "utf8" });
+    assert.equal(lhHelp.status, 0);
+    assert.match(lhHelp.stdout, /lighthouse_audit —/);
+    assert.match(lhHelp.stdout, /--mode/);
+
+    const stopHelp = spawnSync(process.execPath, [CLI_PATH, "stop", "--help"], { env, encoding: "utf8" });
+    assert.equal(stopHelp.status, 0);
+    assert.match(stopHelp.stdout, /stop — Stop the daemon/);
+
+    const cfgShow = spawnSync(process.execPath, [CLI_PATH, "config", "show", "--json"], { env, encoding: "utf8" });
+    assert.equal(cfgShow.status, 0);
+    const parsedCfg = JSON.parse(cfgShow.stdout);
+    assert.equal(parsedCfg.ok, true);
+    assert.equal(parsedCfg.config.browser.idleTimeout, "30m");
+    assert.equal("mcp" in parsedCfg.config, false);
+
     assert.deepEqual(fs.readdirSync(home), []);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
@@ -216,11 +277,9 @@ test("audit regressions: --help stays offline, relative paths normalize to CWD, 
   const fileSource = normalizeToolPaths("evaluate_script", { pageId: 1, sourcePath: "./local.js" });
   assert.equal(fileSource.sourcePath, path.resolve("./local.js"));
 
-  // eval without pageId must fail locally instead of mutating implicit tab
   const badEval = parseGlobalAndCommandArgs(["eval", "() => 1"]);
   assert.throws(() => resolveBuiltinAlias(badEval.command, badEval.args, badEval.globals), /eval requires numeric <pageId>/);
 
-  // pages --owner filters explicitly, whereas env-only owner shows all tabs for discovery
   const pagesAll = parseGlobalAndCommandArgs(["pages"]);
   assert.equal(resolveBuiltinAlias(pagesAll.command, pagesAll.args, pagesAll.globals).ownerFilter, undefined);
   const pagesOwn = parseGlobalAndCommandArgs(["pages", "--owner", "agent-x"]);

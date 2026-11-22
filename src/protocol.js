@@ -42,7 +42,7 @@ function getSocketPath(env = process.env) {
     const user = (env.USERNAME || env.USER || "user").replace(/[^A-Za-z0-9._-]/g, "_");
     return `\\\\.\\pipe\\mab-${user}-${hash}`;
   }
-  // Prefer placing socket inside private homeDir when within Unix sun_path limit (<100 bytes).
+  // Unix sun_path limit is ~104 bytes; fall back to /tmp when homeDir path is too long.
   const inHome = path.join(homeDir, "mab.sock");
   if (Buffer.byteLength(inHome, "utf8") < 100) {
     return inHome;
@@ -62,10 +62,6 @@ function getDaemonLockPath(env = process.env) {
 
 function getDaemonStatePath(env = process.env) {
   return path.join(getHomeDir(env), "daemon.state.json");
-}
-
-function getLegacyLockPath(env = process.env) {
-  return path.join(getHomeDir(env), "browser.lock");
 }
 
 function validateOwnerName(owner) {
@@ -114,7 +110,6 @@ module.exports = {
   getSocketPath,
   getDaemonLockPath,
   getDaemonStatePath,
-  getLegacyLockPath,
   validateOwnerName,
   resolveOwner,
   formatDuration,

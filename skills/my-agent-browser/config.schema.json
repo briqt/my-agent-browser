@@ -13,7 +13,7 @@
         },
         "headless": {
           "type": "boolean",
-          "description": "Whether to run Chrome in headless mode"
+          "description": "Run Chrome in headless mode"
         },
         "proxy": {
           "type": "string",
@@ -21,11 +21,11 @@
         },
         "viewport": {
           "type": "string",
-          "description": "Window size: \"WIDTHxHEIGHT\" (e.g. 1280x720), \"maximized\" (falls back to 1920x1080 in headless), or empty for Chrome default"
+          "description": "Window size: \"WIDTHxHEIGHT\" (e.g. 1280x720), \"maximized\" (1920x1080 in headless), or empty for Chrome default"
         },
         "display": {
           "type": "string",
-          "description": "Linux only: fallback DISPLAY value when unset (e.g. \":0\"). WSLg is auto-detected"
+          "description": "Linux only: fallback DISPLAY value when unset (e.g. \":0\")"
         },
         "debuggingPort": {
           "type": "integer",
@@ -41,50 +41,15 @@
         },
         "browserUrl": {
           "type": "string",
-          "description": "Direct CDP HTTP URL of an existing Chrome instance (skips launching or closing Chrome)"
-        },
-        "lazyStart": {
-          "type": "boolean",
-          "description": "Delay launching Chrome until the first browser tool call (default true)",
-          "default": true
+          "description": "Existing Chrome CDP HTTP or WebSocket URL (skips launching or closing Chrome)"
         },
         "idleTimeout": {
           "type": [
             "string",
             "integer"
           ],
-          "description": "Auto-close idle browser/daemon after duration with unit (e.g. \"30m\", \"1h\", \"300s\") or \"never\" / 0 to never auto-close",
+          "description": "Auto-close idle browser/daemon after duration (e.g. \"30m\", \"1h\", \"300s\") or \"never\" / 0",
           "default": "30m"
-        }
-      }
-    },
-    "mcp": {
-      "type": "object",
-      "description": "chrome-devtools-mcp engine settings",
-      "properties": {
-        "features": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Additional flags forwarded to chrome-devtools-mcp"
-        },
-        "flags": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Additional CLI flags forwarded to chrome-devtools-mcp"
-        },
-        "backgroundNewPages": {
-          "type": "boolean",
-          "description": "When true, supply background: true on new_page calls that omit background. Explicit background arguments always win",
-          "default": false
-        },
-        "batchActions": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable bounded compound batch execution (batch / run_actions)"
         }
       }
     },
@@ -94,12 +59,12 @@
       "properties": {
         "evaluateScript": {
           "type": "boolean",
-          "description": "Rewrite inline evaluate_script functions so page stack traces hide pptr: and MCP install paths. Default true",
+          "description": "Rewrite inline evaluate_script functions so stack traces hide pptr: and local paths",
           "default": true
         },
         "sourceUrl": {
           "type": "string",
-          "description": "Source URL token shown in rewritten evaluate_script stack traces (single non-whitespace token)",
+          "description": "Source URL token shown in rewritten evaluate_script stack traces",
           "default": "eval.js"
         }
       }
@@ -107,7 +72,7 @@
     "disable_update_check": {
       "type": "boolean",
       "default": false,
-      "description": "Disable CLI update networking and cached update/announcement reminders"
+      "description": "Disable CLI update checks and cached update/announcement reminders"
     }
   }
 }

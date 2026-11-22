@@ -4,17 +4,17 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const {
   VERSION,
   TESTED_MCP_VERSION,
   getHomeDir,
   expandHome,
   getSocketPath,
-  getLegacyLockPath,
   resolveOwner,
   formatDuration,
 } = require("./protocol.js");
-const { loadConfig, initConfig, parseIdleTimeout } = require("./config.js");
+const { loadConfig, initConfig, parseIdleTimeout, resolveEffectiveConfig } = require("./config.js");
 const { findChrome, resolveMcpPackage } = require("./chrome.js");
 const {
   DEFAULT_RPC_TIMEOUT_MS,
@@ -27,18 +27,6 @@ const {
 const { checkUpdate, isUpdateDisabled } = require("./update-check.js");
 
 const AUTO_UPDATE_COMMANDS = new Set(["start", "status", "pages", "list_pages", "list-pages"]);
-const LIFECYCLE_COMMANDS = new Set([
-  "start",
-  "stop",
-  "restart",
-  "status",
-  "doctor",
-  "config",
-  "check-update",
-  "tools",
-  "claim",
-  "release",
-]);
 
 const ALIAS_TO_TOOL = {
   pages: "list_pages",
@@ -60,6 +48,7 @@ const ALIAS_TO_TOOL = {
   screenshot: "take_screenshot",
   take_screenshot: "take_screenshot",
   click: "click",
+  click_at: "click_at",
   fill: "fill",
   fill_form: "fill_form",
   hover: "hover",
@@ -75,8 +64,6 @@ const ALIAS_TO_TOOL = {
   wait_for: "wait_for",
   eval: "evaluate_script",
   evaluate_script: "evaluate_script",
-  batch: "run_actions",
-  run_actions: "run_actions",
   console: "list_console_messages",
   list_console_messages: "list_console_messages",
   network: "list_network_requests",
@@ -85,23 +72,149 @@ const ALIAS_TO_TOOL = {
   set_logpoints: "set_logpoints",
 };
 
+const BUILTIN_HELP = {
+  open: `open — Open a URL in a new background tab (returns numeric pageId)
+
+Usage:
+  my-agent-browser open <url> [options]
+
+Options:
+  --owner <name>              Lock the new tab to an agent owner
+  --isolated-context <name>   Open tab in a separate cookie/storage context
+  --timeout <ms>              Navigation timeout in ms
+  --raw                       Print only the numeric pageId (for shell capture)
+  --json                      Output structured JSON`,
+  pages: `pages — List open tabs with numeric pageId, owner, and idle time
+
+Usage:
+  my-agent-browser pages [--owner <name>] [--json]`,
+  goto: `goto — Navigate a tab to a URL (or use reload / back / forward)
+
+Usage:
+  my-agent-browser goto <pageId> <url> [options]
+  my-agent-browser <reload|back|forward> <pageId> [options]
+
+Options:
+  --ignore-cache                  Bypass cache on reload
+  --handle-before-unload <action> accept | dismiss
+  --init-script <js>              Run JS before page scripts on next document
+  --timeout <ms>                  Navigation timeout in ms`,
+  reload: `reload — Reload a tab
+
+Usage:
+  my-agent-browser reload <pageId> [--ignore-cache] [--handle-before-unload accept|dismiss] [--init-script <js>] [--timeout <ms>]`,
+  back: `back — Navigate back in tab history
+
+Usage:
+  my-agent-browser back <pageId> [--handle-before-unload accept|dismiss] [--init-script <js>] [--timeout <ms>]`,
+  forward: `forward — Navigate forward in tab history
+
+Usage:
+  my-agent-browser forward <pageId> [--handle-before-unload accept|dismiss] [--init-script <js>] [--timeout <ms>]`,
+  close: `close / close-page — Close a tab (releases owner lock even if it is the last tab)
+
+Usage:
+  my-agent-browser close-page <pageId> [--owner <name>] [--force]`,
+  snap: `snap — Take accessibility tree snapshot with uid=X_Y refs
+
+Usage:
+  my-agent-browser snap <pageId> [filePath] [--verbose] [-o <filePath>]`,
+  shot: `shot — Take screenshot (always saved to file, never dumps base64)
+
+Usage:
+  my-agent-browser shot <pageId> [filePath] [options]
+
+Options:
+  -o / --file-path <path>     Output image path (default: temp file)
+  --full-page                 Capture full scrollable page (incompatible with --uid)
+  --uid <uid>                 Capture a single element
+  --format <png|jpeg|webp>    Image format (default: png)
+  --quality <0-100>           Compression quality for jpeg/webp
+  --raw                       Print only the saved file path`,
+  fill_form: `fill-form — Fill multiple form fields in a single call
+
+Usage:
+  my-agent-browser fill-form <pageId> <uid=value...> [--include-snapshot]
+  my-agent-browser fill-form <pageId> --elements '[{"uid":"1_7","value":"alice"}]'`,
+  wait_for: `wait-for — Wait until any text substring appears on page (case & whitespace sensitive)
+
+Usage:
+  my-agent-browser wait-for <pageId> <text...> [--visible] [--timeout <ms>]`,
+  eval: `eval — Run a JavaScript function in page context (stealth stack hiding enabled by default)
+
+Usage:
+  my-agent-browser eval <pageId> "<fn>" [options]
+  my-agent-browser eval <pageId> --source-path <file.js> [options]
+
+Options:
+  --raw                       Print bare JSON/string return value for shell pipes
+  --args <uid>                Pass snapshot element UID(s) as arguments (repeatable)
+  --format <function|script>  Interpret source as function (default) or classic script
+  -o / --file-path <path>     Save return value JSON to file
+  --dialog-action <action>    accept | dismiss | prompt text
+  --wait-for-stable-dom       Wait for DOM settle (pass --no-wait-for-stable-dom for pure reads)`,
+  logpoints: `logpoints — Set source-mapped console logpoints on a page
+
+Usage:
+  my-agent-browser logpoints <pageId> "<url>:<line> <expr>"...
+  my-agent-browser logpoints <pageId> --clear`,
+  start: `start — Start the background daemon
+
+Usage:
+  my-agent-browser start [--idle-timeout 30m|never] [--headless | --headed]`,
+  stop: `stop — Stop the daemon and managed Chrome (refuses if another owner holds open tabs)
+
+Usage:
+  my-agent-browser stop [--force]`,
+  restart: `restart — Reload config.json and restart the daemon and managed Chrome
+
+Usage:
+  my-agent-browser restart [--idle-timeout 30m|never] [--headless | --headed] [--force]`,
+  status: `status — Inspect daemon, browser, idle timer, active owners, and canStopSafely
+
+Usage:
+  my-agent-browser status [--json]`,
+  claim: `claim — Lock a tab to your agent owner
+
+Usage:
+  my-agent-browser claim <pageId> --owner <name> [--force]`,
+  release: `release — Release the ownership lock on a tab
+
+Usage:
+  my-agent-browser release <pageId> [--owner <name>] [--force]`,
+  config: `config — Manage ~/.config/agent-skills/my-agent-browser/config.json
+
+Usage:
+  my-agent-browser config init        Create default config.json if absent
+  my-agent-browser config path        Print config.json path
+  my-agent-browser config show        Print effective config (with defaults applied)
+  my-agent-browser config validate    Validate config.json syntax and schema`,
+  doctor: `doctor — Offline diagnostics (paths, versions, config, daemon status)
+
+Usage:
+  my-agent-browser doctor [--json]`,
+  tools: `tools — List all enabled Chrome DevTools tools grouped by category
+
+Usage:
+  my-agent-browser tools [--json]`,
+  "check-update": `check-update — Check release and notice feed without starting the browser
+
+Usage:
+  my-agent-browser check-update [--json]`,
+  call: `call — Invoke any upstream tool with raw JSON arguments
+
+Usage:
+  my-agent-browser call <toolName> --args-json '<json>'`,
+};
+
 const PATH_FIELDS = [
   "filePath",
   "baseFilePath",
   "currentFilePath",
-  "snapshotFilePath",
   "outputDirPath",
   "requestFilePath",
   "responseFilePath",
 ];
-
-function assertAllowedOptions(options, allowed, cmdName) {
-  for (const key of Object.keys(options)) {
-    if (!allowed.includes(key)) {
-      throw new Error(`Unknown option '--${key}' for '${cmdName}'. Run 'my-agent-browser ${cmdName} --help'.`);
-    }
-  }
-}
 
 function toCamelCase(flagName) {
   return flagName.replace(/-([a-z0-9])/g, (_, ch) => ch.toUpperCase());
@@ -111,12 +224,16 @@ function toSnakeCase(cmdName) {
   return cmdName.replace(/-/g, "_");
 }
 
+function camelToSnake(name) {
+  return name.replace(/[A-Z]/g, (ch) => `_${ch.toLowerCase()}`);
+}
+
 function resolveLocalPath(p) {
   if (typeof p !== "string" || !p) return p;
   return path.resolve(expandHome(p));
 }
 
-// Resolve relative / ~ file paths against the CLI caller's CWD before sending to the background daemon.
+// Resolve relative / ~ paths against the caller's CWD before dispatching to the daemon.
 function normalizeToolPaths(toolName, args) {
   if (!args || typeof args !== "object") return args;
   const out = { ...args };
@@ -199,7 +316,7 @@ function parseGlobalAndCommandArgs(rawArgv) {
   return { globals, command: rest[0] || null, args: rest.slice(1) };
 }
 
-function parseSubcommandTokens(tokens, booleanFlags = new Set(), arrayFlags = new Set()) {
+function parseSubcommandTokens(tokens, booleanFlags = new Set(), arrayFlags = new Set(), allowedFlags = null, cmdName = "") {
   const positionals = [];
   const options = {};
 
@@ -210,6 +327,9 @@ function parseSubcommandTokens(tokens, booleanFlags = new Set(), arrayFlags = ne
       break;
     }
     if (token === "-o") {
+      if (allowedFlags && !allowedFlags.has("filePath")) {
+        throw new Error(`Unknown option '-o' for '${cmdName}'. Run 'my-agent-browser ${cmdName} --help'.`);
+      }
       const val = tokens[++i];
       if (val === undefined) throw new Error("-o requires a file path");
       options.filePath = val;
@@ -226,13 +346,21 @@ function parseSubcommandTokens(tokens, booleanFlags = new Set(), arrayFlags = ne
 
     if (rawKey.startsWith("no-") && !hasInline) {
       const baseKey = toCamelCase(rawKey.slice(3));
+      const baseSnake = camelToSnake(baseKey);
+      if (allowedFlags && !allowedFlags.has(baseKey) && !allowedFlags.has(baseSnake)) {
+        throw new Error(`Unknown option '--${rawKey}' for '${cmdName}'. Run 'my-agent-browser ${cmdName} --help'.`);
+      }
       options[baseKey] = false;
       continue;
     }
 
     const key = toCamelCase(rawKey);
-    const isBool = booleanFlags.has(key) || booleanFlags.has(rawKey);
-    const isArr = arrayFlags.has(key) || arrayFlags.has(rawKey);
+    const snakeKey = camelToSnake(key);
+    if (allowedFlags && !allowedFlags.has(key) && !allowedFlags.has(rawKey) && !allowedFlags.has(snakeKey)) {
+      throw new Error(`Unknown option '--${rawKey}' for '${cmdName}'. Run 'my-agent-browser ${cmdName} --help'.`);
+    }
+    const isBool = booleanFlags.has(key) || booleanFlags.has(rawKey) || booleanFlags.has(snakeKey);
+    const isArr = arrayFlags.has(key) || arrayFlags.has(rawKey) || arrayFlags.has(snakeKey);
 
     let val;
     if (hasInline) {
@@ -260,6 +388,13 @@ function parseSubcommandTokens(tokens, booleanFlags = new Set(), arrayFlags = ne
   return { positionals, options };
 }
 
+function parseStrictBoolean(value, flagName) {
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`--${flagName} expects boolean (true/false), got: ${value}`);
+}
+
 function parseStrictInt(value, flagName) {
   const n = typeof value === "number" ? value : Number(String(value).trim());
   if (!Number.isSafeInteger(n)) throw new Error(`--${flagName} expects an integer, got: ${value}`);
@@ -275,12 +410,7 @@ function parseStrictNumber(value, flagName) {
 function coerceBySchema(value, propSchema, flagName) {
   if (value === undefined) return undefined;
   const type = propSchema?.type;
-  if (type === "boolean") {
-    if (typeof value === "boolean") return value;
-    if (value === "true") return true;
-    if (value === "false") return false;
-    throw new Error(`--${flagName} expects boolean (true/false), got: ${value}`);
-  }
+  if (type === "boolean") return parseStrictBoolean(value, flagName);
   if (type === "number" || type === "integer") {
     if (typeof value === "number") return value;
     if (typeof value === "string" && value.trim() !== "") {
@@ -305,21 +435,14 @@ function coerceBySchema(value, propSchema, flagName) {
     }
     if (!Array.isArray(arr)) throw new Error(`--${flagName} expects an array`);
     const expectsObjectItem = itemSchema.type === "object" || itemSchema.oneOf?.some((s) => s.type === "object");
-    return arr.map((item) => {
-      if (expectsObjectItem) {
-        return typeof item === "string" ? JSON.parse(item) : item;
-      }
-      return coerceBySchema(item, itemSchema, flagName);
-    });
+    return arr.map((item) => (expectsObjectItem ? (typeof item === "string" ? JSON.parse(item) : item) : coerceBySchema(item, itemSchema, flagName)));
   }
   if (type === "object" || propSchema?.oneOf?.some((s) => s.type === "object")) {
     if (typeof value === "object" && value !== null) return value;
     try { return JSON.parse(String(value)); }
     catch { throw new Error(`--${flagName} expects a JSON object`); }
   }
-  if (!type && typeof value !== "string") {
-    return value;
-  }
+  if (!type && typeof value !== "string") return value;
   return String(value);
 }
 
@@ -350,6 +473,13 @@ function extractRawEvalValue(text) {
   return text;
 }
 
+function extractSavedShotPath(resp) {
+  const fromSaved = resp?.structuredContent?.savedImages?.[0]?.filePath;
+  if (fromSaved) return fromSaved;
+  const match = /Saved screenshot to (.+?)\.?\s*$/m.exec(resp?.text || "");
+  return match ? match[1] : (resp?.text || "");
+}
+
 function printMainHelp() {
   console.log(`my-agent-browser ${VERSION} — Stealth, managed Chrome DevTools CLI for AI agents
 
@@ -357,32 +487,34 @@ Usage:
   my-agent-browser <command> [args...] [options]
 
 Core Browser Commands:
-  open <url>                        Open a new tab (--owner <name>, --background, --foreground)
-  pages                             List open tabs with numeric pageId, owner and idle time
+  open <url>                        Open a tab in the background (--owner <name>, --raw for bare pageId)
+  pages                             List open tabs with numeric pageId, owner, and idle time
   goto <pageId> <url>               Navigate tab to URL (also: reload / back / forward <pageId>)
+  close-page <pageId>               Close tab (alias: close)
   snap <pageId> [filePath]          Accessibility tree snapshot with uid refs (--verbose, -o <file>)
-  shot <pageId> [filePath]          Take screenshot; saves to file (never dumps base64) (--full-page, --uid <uid>)
+  shot <pageId> [filePath]          Take screenshot; saves to file (--full-page, --uid <uid>, --raw)
   click <pageId> <uid>              Click element (--dbl-click, --include-snapshot)
-  fill <pageId> <uid> <value>       Clear field and type value
+  click-at <pageId> <x> <y>         Click by viewport coordinates (--dbl-click)
+  fill <pageId> <uid> <value>       Clear field and enter value
   fill-form <pageId> <uid=val...>   Fill multiple fields in one call (or --elements '<json>')
   hover <pageId> <uid>              Hover over element
   drag <pageId> <fromUid> <toUid>   Drag between elements
-  press <pageId> <key>              Press key or combo (Enter, Tab, Escape, Control+A, ...)
+  press <pageId> <key>              Press key or shortcut (Enter, Tab, Escape, Control+A, ...)
   type <pageId> <text>              Type into focused element (--submit-key Enter)
   upload <pageId> <uid> <file...>   Upload file(s) through input/chooser element
   dialog <pageId> <accept|dismiss>  Handle alert/confirm/prompt (--prompt-text <text>)
   wait-for <pageId> <text...>       Wait until any text appears (--timeout <ms>, --visible)
   eval <pageId> <fn>                Run JS function in page (stealth stack hiding; --raw for pipes)
-  batch <pageId> '<actions-json>'   Run up to 10 known stable steps (--snapshot final, --snapshot-file <f>)
 
-DevTools & Native Ceiling (all 33+ upstream tools available directly):
+DevTools Ceiling (50 upstream tools enabled out of the box):
   console <pageId>                  List console messages (--types error)
   network <pageId>                  List network requests (--resource-types fetch)
   logpoints <pageId> <spec...>      Set source-mapped logpoints (--clear to remove all)
-  <any_upstream_tool> [args...]     Call any chrome-devtools-mcp tool directly (e.g. lighthouse_audit,
-                                    emulate, performance_start_trace, take_heapsnapshot, mock_network)
+  <any_upstream_tool> [args...]     Call any tool directly (mock_network, lighthouse_audit, emulate,
+                                    configure_webauthn, performance_start_trace, take_heapsnapshot,
+                                    get_heapsnapshot_summary, screencast_start, ...)
   call <tool> --args-json '<json>'  Lossless raw JSON tool invocation
-  tools [--json]                    List all currently enabled tools in the live engine
+  tools [--json]                    List all enabled tools grouped by category
 
 Daemon, Multi-Agent Ownership & Maintenance:
   status [--json]                   Inspect daemon, browser, idle timer, active owners & canStopSafely
@@ -391,7 +523,7 @@ Daemon, Multi-Agent Ownership & Maintenance:
   restart [--force]                 Reload config.json and restart daemon & managed Chrome
   claim <pageId> --owner <name>     Lock a tab to your agent owner
   release <pageId>                  Release ownership lock on a tab
-  config <init|path|validate>       Create or validate ~/.config/agent-skills/my-agent-browser/config.json
+  config <init|path|show|validate>  Manage ~/.config/agent-skills/my-agent-browser/config.json
   doctor [--json]                   Offline diagnostics (paths, versions, config, daemon status)
   check-update [--json]             Check release & notice feed without starting browser
 
@@ -400,7 +532,7 @@ Global Options:
   --force                           Override another owner's lock on tab mutation or browser stop
   --page <pageId>                   Pass numeric pageId as an option instead of positional argument
   --json                            Output structured JSON on stdout
-  --raw                             Output raw return value on 'eval' for shell pipelines
+  --raw                             Bare output on open (pageId), eval (value), and shot (file path)
   --rpc-timeout-ms <ms>             Override daemon RPC timeout (default 65000ms)
   --no-update-check                 Disable update checks and cached stderr notices
   --dev-config                      Allow skill-directory .config.json
@@ -411,7 +543,9 @@ Run 'my-agent-browser <command> --help' for details on any command or upstream t
 function formatToolHelp(tool) {
   const schema = tool.inputSchema || { properties: {}, required: [] };
   const required = new Set(schema.required || []);
-  const props = Object.entries(schema.properties || {});
+  const props = Object.entries(schema.properties || {}).filter(
+    ([k]) => !(tool.name === "new_page" && k === "background")
+  );
   const posUsage = props
     .filter(([k]) => required.has(k))
     .map(([k]) => `<${k}>`)
@@ -420,7 +554,7 @@ function formatToolHelp(tool) {
   const lines = [
     `${tool.name} — ${tool.description || ""}`,
     "",
-    `Usage:`,
+    "Usage:",
     `  my-agent-browser ${tool.name}${posUsage ? " " + posUsage : ""} [options]`,
     `  my-agent-browser call ${tool.name} --args-json '<json>'`,
   ];
@@ -436,6 +570,79 @@ function formatToolHelp(tool) {
     }
   }
   console.log(lines.join("\n"));
+}
+
+let offlineCatalogCache = null;
+async function loadOfflineToolCatalog() {
+  if (offlineCatalogCache) return offlineCatalogCache;
+  try {
+    const pkgJson = require.resolve("chrome-devtools-mcp/package.json");
+    const cliOptionsPath = path.join(path.dirname(pkgJson), "out", "Default", "gen", "src", "config", "cli-options.js");
+    const mod = await import(pathToFileURL(cliOptionsPath).href);
+    offlineCatalogCache = mod.commands || {};
+  } catch {
+    offlineCatalogCache = {};
+  }
+  return offlineCatalogCache;
+}
+
+function catalogEntryToTool(name, def) {
+  const properties = {};
+  const required = [];
+  for (const [k, spec] of Object.entries(def.args || {})) {
+    properties[k] = {
+      type: spec.type,
+      description: spec.description,
+      ...(spec.enum ? { enum: spec.enum } : {}),
+    };
+    if (spec.required) required.push(k);
+  }
+  return {
+    name,
+    description: (def.description || "").replace(/\s*\(requires flag:[^)]+\)/g, ""),
+    category: def.category || "Other",
+    inputSchema: { type: "object", properties, required },
+  };
+}
+
+async function printCommandHelp(command, args) {
+  const normalized = toSnakeCase(command);
+  if (BUILTIN_HELP[command]) {
+    console.log(BUILTIN_HELP[command]);
+    return;
+  }
+  if (BUILTIN_HELP[normalized]) {
+    console.log(BUILTIN_HELP[normalized]);
+    return;
+  }
+  if (normalized === "close_page") {
+    console.log(BUILTIN_HELP.close);
+    return;
+  }
+  if (normalized === "snapshot") {
+    console.log(BUILTIN_HELP.snap);
+    return;
+  }
+  if (normalized === "screenshot") {
+    console.log(BUILTIN_HELP.shot);
+    return;
+  }
+
+  const targetName = command === "call" && args[0] ? toSnakeCase(args[0]) : (ALIAS_TO_TOOL[normalized] || normalized);
+  const live = await sendRawRequest("list_tools", {}, { env: process.env, timeoutMs: 1500 }).catch(() => null);
+  if (live?.ok && Array.isArray(live.tools)) {
+    const found = live.tools.find((t) => t.name === targetName || t.name === command);
+    if (found) {
+      formatToolHelp(found);
+      return;
+    }
+  }
+  const catalog = await loadOfflineToolCatalog();
+  if (catalog[targetName]) {
+    formatToolHelp(catalogEntryToTool(targetName, catalog[targetName]));
+    return;
+  }
+  printMainHelp();
 }
 
 function findInstalledSkillInfo() {
@@ -463,7 +670,6 @@ async function runDoctor(globals) {
   const skillInfo = findInstalledSkillInfo();
   const callerOwner = resolveOwner(globals.owner, process.env);
   const daemon = await inspectDaemon({ env: process.env, callerOwner });
-  const legacyLockPath = getLegacyLockPath(process.env);
 
   const report = {
     version: VERSION,
@@ -480,7 +686,6 @@ async function runDoctor(globals) {
     mcpVersion: mcpInfo?.version || null,
     expectedMcpVersion: TESTED_MCP_VERSION,
     mcpMatchesTestedVersion: mcpInfo?.version === TESTED_MCP_VERSION,
-    legacyV1LockFound: fs.existsSync(legacyLockPath),
     daemon: daemon
       ? {
           pid: daemon.pid,
@@ -502,10 +707,10 @@ async function runDoctor(globals) {
       "owner-locks",
       "idle-timeout",
       "pageId-routing",
+      "background-new-pages",
       "mcp-reinitialize",
       "no-tool-replay",
       "stealth-evaluate",
-      "bounded-batch",
     ],
   };
 
@@ -517,7 +722,6 @@ async function runDoctor(globals) {
     report.mode = b.browserUrl ? "direct" : "managed";
     report.configuredIdleTimeout = b.idleTimeout !== undefined ? b.idleTimeout : "30m";
     parseIdleTimeout(b.idleTimeout);
-    report.batchActionsEnabled = loaded.config.mcp?.batchActions !== false && report.mcpMatchesTestedVersion;
   } catch (err) {
     report.configError = err.message;
     process.exitCode = 1;
@@ -539,7 +743,7 @@ function outputError(message, asJson, extra = {}) {
   process.exitCode = 1;
 }
 
-function outputToolResponse(resp, globals, { isEval = false } = {}) {
+function outputToolResponse(resp, globals, { toolName = "" } = {}) {
   if (!resp || resp.isError || !resp.ok) {
     const extra = {};
     if (resp?.structuredContent) extra.structuredContent = resp.structuredContent;
@@ -552,6 +756,7 @@ function outputToolResponse(resp, globals, { isEval = false } = {}) {
     console.log(
       JSON.stringify({
         ok: true,
+        ...(Number.isFinite(resp.pageId) ? { pageId: resp.pageId } : {}),
         text: resp.text,
         structuredContent: resp.structuredContent,
         ...(resp.pages ? { pages: resp.pages } : {}),
@@ -559,8 +764,24 @@ function outputToolResponse(resp, globals, { isEval = false } = {}) {
     );
     return;
   }
-  if (isEval && globals.raw) {
-    console.log(extractRawEvalValue(resp.text));
+  if (globals.raw) {
+    if (toolName === "evaluate_script") {
+      console.log(extractRawEvalValue(resp.text));
+      return;
+    }
+    if (toolName === "new_page" && Number.isFinite(resp.pageId)) {
+      console.log(String(resp.pageId));
+      return;
+    }
+    if (toolName === "take_screenshot") {
+      console.log(extractSavedShotPath(resp));
+      return;
+    }
+  }
+  if (toolName === "new_page" && resp.openedPage) {
+    const p = resp.openedPage;
+    const own = p.owner ? `  owner=${p.owner}` : "";
+    console.log(`Opened page ${p.pageId}: ${p.title || "(untitled)"} (${p.url})${own}`);
     return;
   }
   if (resp.pages) {
@@ -584,38 +805,36 @@ function resolveBuiltinAlias(cmd, rawArgs, globals) {
   const normalized = toSnakeCase(cmd);
 
   if (normalized === "pages" || normalized === "list_pages") {
-    const { options } = parseSubcommandTokens(rawArgs);
-    assertAllowedOptions(options, [], cmd);
+    parseSubcommandTokens(rawArgs, new Set(), new Set(), new Set(), cmd);
     const ownerFilter = globals.owner !== undefined ? resolveOwner(globals.owner, {}) : undefined;
     return { tool: "list_pages", arguments: {}, ...(ownerFilter ? { ownerFilter } : {}) };
   }
 
   if (normalized === "open" || normalized === "new_page") {
-    const { positionals, options } = parseSubcommandTokens(
-      rawArgs,
-      new Set(["background", "foreground"]),
-    );
-    assertAllowedOptions(options, ["url", "background", "foreground", "isolatedContext", "timeout"], cmd);
+    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(), new Set(), new Set(["url", "isolatedContext", "timeout"]), cmd);
     const url = options.url ?? positionals[0];
     if (!url) throw new Error("open requires <url> (e.g. my-agent-browser open https://example.com)");
     const args = { url: String(url) };
-    if (options.foreground === true) args.background = false;
-    else if (options.background !== undefined) args.background = Boolean(options.background);
     if (options.isolatedContext !== undefined) args.isolatedContext = String(options.isolatedContext);
     if (options.timeout !== undefined) args.timeout = parseStrictInt(options.timeout, "timeout");
     return { tool: "new_page", arguments: args };
   }
 
   if (normalized === "goto" || normalized === "navigate_page") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["ignoreCache"]));
-    assertAllowedOptions(options, ["url", "type", "ignoreCache", "handleBeforeUnload", "initScript", "timeout"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["ignoreCache"]),
+      new Set(),
+      new Set(["url", "type", "ignoreCache", "handleBeforeUnload", "initScript", "timeout"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
     const url = options.url ?? positionals[0];
     const args = { pageId };
     if (options.type !== undefined) args.type = String(options.type);
     if (url !== undefined) args.url = String(url);
     if (!args.url && !args.type) throw new Error("goto requires <url> or --type <reload|back|forward>");
-    if (options.ignoreCache !== undefined) args.ignoreCache = Boolean(options.ignoreCache);
+    if (options.ignoreCache !== undefined) args.ignoreCache = parseStrictBoolean(options.ignoreCache, "ignore-cache");
     if (options.handleBeforeUnload !== undefined) args.handleBeforeUnload = String(options.handleBeforeUnload);
     if (options.initScript !== undefined) args.initScript = String(options.initScript);
     if (options.timeout !== undefined) args.timeout = parseStrictInt(options.timeout, "timeout");
@@ -623,50 +842,59 @@ function resolveBuiltinAlias(cmd, rawArgs, globals) {
   }
 
   if (normalized === "reload" || normalized === "back" || normalized === "forward") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["ignoreCache"]));
-    assertAllowedOptions(options, ["ignoreCache", "timeout"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["ignoreCache"]),
+      new Set(),
+      new Set(["ignoreCache", "handleBeforeUnload", "initScript", "timeout"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
     const args = { pageId, type: normalized };
-    if (options.ignoreCache !== undefined) args.ignoreCache = Boolean(options.ignoreCache);
+    if (options.ignoreCache !== undefined) args.ignoreCache = parseStrictBoolean(options.ignoreCache, "ignore-cache");
+    if (options.handleBeforeUnload !== undefined) args.handleBeforeUnload = String(options.handleBeforeUnload);
+    if (options.initScript !== undefined) args.initScript = String(options.initScript);
     if (options.timeout !== undefined) args.timeout = parseStrictInt(options.timeout, "timeout");
     return { tool: "navigate_page", arguments: args };
   }
 
   if (normalized === "select_page") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["bringToFront"]));
-    assertAllowedOptions(options, ["bringToFront"], cmd);
+    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["bringToFront"]), new Set(), new Set(["bringToFront"]), cmd);
     const pageId = requirePageId(globals, positionals);
     const args = { pageId };
-    if (options.bringToFront !== undefined) args.bringToFront = Boolean(options.bringToFront);
+    if (options.bringToFront !== undefined) args.bringToFront = parseStrictBoolean(options.bringToFront, "bring-to-front");
     return { tool: "select_page", arguments: args };
   }
 
   if (normalized === "close_page" || normalized === "close") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs);
-    assertAllowedOptions(options, [], cmd);
+    const { positionals } = parseSubcommandTokens(rawArgs, new Set(), new Set(), new Set(), cmd);
     const pageId = requirePageId(globals, positionals);
     return { tool: "close_page", arguments: { pageId } };
   }
 
   if (normalized === "snap" || normalized === "snapshot" || normalized === "take_snapshot") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["verbose"]));
-    assertAllowedOptions(options, ["filePath", "file", "verbose"], cmd);
+    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["verbose"]), new Set(), new Set(["filePath", "file", "verbose"]), cmd);
     const pageId = requirePageId(globals, positionals);
     const filePath = options.filePath ?? options.file ?? positionals[0];
     const args = { pageId };
-    if (options.verbose !== undefined) args.verbose = Boolean(options.verbose);
+    if (options.verbose !== undefined) args.verbose = parseStrictBoolean(options.verbose, "verbose");
     if (filePath !== undefined) args.filePath = String(filePath);
     return { tool: "take_snapshot", arguments: normalizeToolPaths("take_snapshot", args) };
   }
 
   if (normalized === "shot" || normalized === "screenshot" || normalized === "take_screenshot") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["fullPage"]));
-    assertAllowedOptions(options, ["filePath", "file", "fullPage", "uid", "format", "quality"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["fullPage"]),
+      new Set(),
+      new Set(["filePath", "file", "fullPage", "uid", "format", "quality"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
     const filePath = options.filePath ?? options.file ?? positionals[0];
     const args = { pageId };
     if (filePath !== undefined) args.filePath = String(filePath);
-    if (options.fullPage !== undefined) args.fullPage = Boolean(options.fullPage);
+    if (options.fullPage !== undefined) args.fullPage = parseStrictBoolean(options.fullPage, "full-page");
     if (options.uid !== undefined) args.uid = String(options.uid);
     if (options.format !== undefined) args.format = String(options.format);
     if (options.quality !== undefined) args.quality = parseStrictNumber(options.quality, "quality");
@@ -674,32 +902,65 @@ function resolveBuiltinAlias(cmd, rawArgs, globals) {
   }
 
   if (normalized === "click") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["dblClick", "includeSnapshot"]));
-    assertAllowedOptions(options, ["uid", "dblClick", "includeSnapshot"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["dblClick", "includeSnapshot"]),
+      new Set(),
+      new Set(["uid", "dblClick", "includeSnapshot"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
     const uid = options.uid ?? positionals[0];
     if (!uid) throw new Error("click requires <uid>");
     const args = { pageId, uid: String(uid) };
-    if (options.dblClick !== undefined) args.dblClick = Boolean(options.dblClick);
-    if (options.includeSnapshot !== undefined) args.includeSnapshot = Boolean(options.includeSnapshot);
+    if (options.dblClick !== undefined) args.dblClick = parseStrictBoolean(options.dblClick, "dbl-click");
+    if (options.includeSnapshot !== undefined) args.includeSnapshot = parseStrictBoolean(options.includeSnapshot, "include-snapshot");
     return { tool: "click", arguments: args };
   }
 
+  if (normalized === "click_at") {
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["dblClick", "includeSnapshot"]),
+      new Set(),
+      new Set(["x", "y", "dblClick", "includeSnapshot"]),
+      cmd
+    );
+    const pageId = requirePageId(globals, positionals);
+    const x = options.x ?? positionals[0];
+    const y = options.y ?? positionals[1];
+    if (x === undefined || y === undefined) throw new Error("click-at requires <x> <y>");
+    const args = { pageId, x: parseStrictNumber(x, "x"), y: parseStrictNumber(y, "y") };
+    if (options.dblClick !== undefined) args.dblClick = parseStrictBoolean(options.dblClick, "dbl-click");
+    if (options.includeSnapshot !== undefined) args.includeSnapshot = parseStrictBoolean(options.includeSnapshot, "include-snapshot");
+    return { tool: "click_at", arguments: args };
+  }
+
   if (normalized === "fill") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["includeSnapshot"]));
-    assertAllowedOptions(options, ["uid", "value", "includeSnapshot"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["includeSnapshot"]),
+      new Set(),
+      new Set(["uid", "value", "includeSnapshot"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
     const uid = options.uid ?? positionals[0];
     const value = options.value ?? positionals[1];
     if (!uid || value === undefined) throw new Error("fill requires <uid> <value>");
     const args = { pageId, uid: String(uid), value: String(value) };
-    if (options.includeSnapshot !== undefined) args.includeSnapshot = Boolean(options.includeSnapshot);
+    if (options.includeSnapshot !== undefined) args.includeSnapshot = parseStrictBoolean(options.includeSnapshot, "include-snapshot");
     return { tool: "fill", arguments: args };
   }
 
   if (normalized === "fill_form") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["includeSnapshot"]));
-    assertAllowedOptions(options, ["elements", "includeSnapshot"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["includeSnapshot"]),
+      new Set(),
+      new Set(["elements", "includeSnapshot"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
     let elements;
     if (options.elements !== undefined) {
@@ -716,47 +977,61 @@ function resolveBuiltinAlias(cmd, rawArgs, globals) {
       throw new Error("fill-form requires <uid=value...> pairs or --elements '<json>'");
     }
     const args = { pageId, elements };
-    if (options.includeSnapshot !== undefined) args.includeSnapshot = Boolean(options.includeSnapshot);
+    if (options.includeSnapshot !== undefined) args.includeSnapshot = parseStrictBoolean(options.includeSnapshot, "include-snapshot");
     return { tool: "fill_form", arguments: args };
   }
 
   if (normalized === "hover") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["includeSnapshot"]));
-    assertAllowedOptions(options, ["uid", "includeSnapshot"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["includeSnapshot"]),
+      new Set(),
+      new Set(["uid", "includeSnapshot"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
     const uid = options.uid ?? positionals[0];
     if (!uid) throw new Error("hover requires <uid>");
     const args = { pageId, uid: String(uid) };
-    if (options.includeSnapshot !== undefined) args.includeSnapshot = Boolean(options.includeSnapshot);
+    if (options.includeSnapshot !== undefined) args.includeSnapshot = parseStrictBoolean(options.includeSnapshot, "include-snapshot");
     return { tool: "hover", arguments: args };
   }
 
   if (normalized === "drag") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["includeSnapshot"]));
-    assertAllowedOptions(options, ["fromUid", "from_uid", "toUid", "to_uid", "includeSnapshot"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["includeSnapshot"]),
+      new Set(),
+      new Set(["fromUid", "from_uid", "toUid", "to_uid", "includeSnapshot"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
     const fromUid = options.fromUid ?? options.from_uid ?? positionals[0];
     const toUid = options.toUid ?? options.to_uid ?? positionals[1];
     if (!fromUid || !toUid) throw new Error("drag requires <fromUid> <toUid>");
     const args = { pageId, from_uid: String(fromUid), to_uid: String(toUid) };
-    if (options.includeSnapshot !== undefined) args.includeSnapshot = Boolean(options.includeSnapshot);
+    if (options.includeSnapshot !== undefined) args.includeSnapshot = parseStrictBoolean(options.includeSnapshot, "include-snapshot");
     return { tool: "drag", arguments: args };
   }
 
   if (normalized === "press" || normalized === "press_key") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["includeSnapshot"]));
-    assertAllowedOptions(options, ["key", "includeSnapshot"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["includeSnapshot"]),
+      new Set(),
+      new Set(["key", "includeSnapshot"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
     const key = options.key ?? positionals[0];
     if (!key) throw new Error("press requires <key> (e.g. Enter, Escape, Control+A)");
     const args = { pageId, key: String(key) };
-    if (options.includeSnapshot !== undefined) args.includeSnapshot = Boolean(options.includeSnapshot);
+    if (options.includeSnapshot !== undefined) args.includeSnapshot = parseStrictBoolean(options.includeSnapshot, "include-snapshot");
     return { tool: "press_key", arguments: args };
   }
 
   if (normalized === "type" || normalized === "type_text") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs);
-    assertAllowedOptions(options, ["text", "submitKey"], cmd);
+    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(), new Set(), new Set(["text", "submitKey"]), cmd);
     const pageId = requirePageId(globals, positionals);
     const text = options.text ?? positionals[0];
     if (text === undefined) throw new Error("type requires <text>");
@@ -766,20 +1041,24 @@ function resolveBuiltinAlias(cmd, rawArgs, globals) {
   }
 
   if (normalized === "upload" || normalized === "upload_file") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["includeSnapshot"]), new Set(["filePaths"]));
-    assertAllowedOptions(options, ["uid", "filePath", "filePaths", "includeSnapshot"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["includeSnapshot"]),
+      new Set(["filePaths"]),
+      new Set(["uid", "filePath", "filePaths", "includeSnapshot"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
     const uid = options.uid ?? positionals.shift();
     const filePaths = options.filePaths ?? (options.filePath ? [options.filePath] : positionals);
     if (!uid || !filePaths.length) throw new Error("upload requires <uid> <filePath...>");
     const args = { pageId, uid: String(uid), filePaths: filePaths.map(String) };
-    if (options.includeSnapshot !== undefined) args.includeSnapshot = Boolean(options.includeSnapshot);
+    if (options.includeSnapshot !== undefined) args.includeSnapshot = parseStrictBoolean(options.includeSnapshot, "include-snapshot");
     return { tool: "upload_file", arguments: normalizeToolPaths("upload_file", args) };
   }
 
   if (normalized === "dialog" || normalized === "handle_dialog") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs);
-    assertAllowedOptions(options, ["action", "promptText"], cmd);
+    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(), new Set(), new Set(["action", "promptText"]), cmd);
     const pageId = requirePageId(globals, positionals);
     const action = options.action ?? positionals[0];
     if (!action) throw new Error("dialog requires <accept|dismiss>");
@@ -789,22 +1068,28 @@ function resolveBuiltinAlias(cmd, rawArgs, globals) {
   }
 
   if (normalized === "wait_for") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["visible"]), new Set(["text"]));
-    assertAllowedOptions(options, ["text", "timeout", "visible"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["visible"]),
+      new Set(["text"]),
+      new Set(["text", "timeout", "visible"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
     const texts = options.text ?? positionals;
     if (!texts.length) throw new Error("wait-for requires at least one text string");
     const args = { pageId, text: texts.map(String) };
     if (options.timeout !== undefined) args.timeout = parseStrictInt(options.timeout, "timeout");
-    if (options.visible !== undefined) args.visible = Boolean(options.visible);
+    if (options.visible !== undefined) args.visible = parseStrictBoolean(options.visible, "visible");
     return { tool: "wait_for", arguments: args };
   }
 
   if (normalized === "eval" || normalized === "evaluate_script") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["waitForStableDom"]), new Set(["args"]));
-    assertAllowedOptions(
-      options,
-      ["function", "sourcePath", "format", "args", "filePath", "dialogAction", "waitForStableDom", "serviceWorkerId"],
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["waitForStableDom"]),
+      new Set(["args"]),
+      new Set(["function", "sourcePath", "format", "args", "filePath", "dialogAction", "waitForStableDom", "serviceWorkerId"]),
       cmd
     );
     let pageId = globals.pageId;
@@ -820,43 +1105,17 @@ function resolveBuiltinAlias(cmd, rawArgs, globals) {
     if (options.args !== undefined) args.args = options.args.map(String);
     if (options.filePath !== undefined) args.filePath = String(options.filePath);
     if (options.dialogAction !== undefined) args.dialogAction = String(options.dialogAction);
-    if (options.waitForStableDom !== undefined) args.waitForStableDom = Boolean(options.waitForStableDom);
+    if (options.waitForStableDom !== undefined) {
+      args.waitForStableDom = parseStrictBoolean(options.waitForStableDom, "wait-for-stable-dom");
+    }
     if (options.serviceWorkerId !== undefined) args.serviceWorkerId = String(options.serviceWorkerId);
     if (args.pageId === undefined && !args.serviceWorkerId) {
-      throw new Error("eval requires numeric <pageId> (e.g. my-agent-browser eval 1 \"() => document.title\")");
+      throw new Error('eval requires numeric <pageId> (e.g. my-agent-browser eval 1 "() => document.title")');
     }
     if (!args.function && !args.sourcePath) {
       throw new Error("eval requires <function> or --source-path <file>");
     }
-    return { tool: "evaluate_script", arguments: normalizeToolPaths("evaluate_script", args), isEval: true };
-  }
-
-  if (normalized === "batch" || normalized === "run_actions") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs);
-    assertAllowedOptions(options, ["file", "actions", "snapshot", "snapshotFile", "snapshotFilePath", "timeoutMs", "timeout"], cmd);
-    const pageId = requirePageId(globals, positionals);
-    let actions;
-    if (options.file !== undefined) {
-      const parsed = JSON.parse(fs.readFileSync(resolveLocalPath(String(options.file)), "utf8"));
-      actions = Array.isArray(parsed) ? parsed : parsed.actions;
-    } else if (options.actions !== undefined) {
-      actions = JSON.parse(String(options.actions));
-    } else if (positionals[0] !== undefined) {
-      const parsed = JSON.parse(positionals[0]);
-      actions = Array.isArray(parsed) ? parsed : parsed.actions;
-    } else {
-      throw new Error("batch requires '<actions-json>' or --file <plan.json>");
-    }
-    const args = { pageId, actions };
-    if (options.snapshot !== undefined) args.snapshot = String(options.snapshot);
-    else if (options.snapshotFile !== undefined || options.snapshotFilePath !== undefined) args.snapshot = "final";
-    if (options.snapshotFile !== undefined || options.snapshotFilePath !== undefined) {
-      args.snapshotFilePath = String(options.snapshotFile ?? options.snapshotFilePath);
-    }
-    if (options.timeoutMs !== undefined || options.timeout !== undefined) {
-      args.timeoutMs = parseStrictInt(options.timeoutMs ?? options.timeout, "timeout-ms");
-    }
-    return { tool: "run_actions", arguments: normalizeToolPaths("run_actions", args) };
+    return { tool: "evaluate_script", arguments: normalizeToolPaths("evaluate_script", args) };
   }
 
   if (normalized === "console" || normalized === "list_console_messages") {
@@ -864,10 +1123,7 @@ function resolveBuiltinAlias(cmd, rawArgs, globals) {
       rawArgs,
       new Set(["includePreservedMessages", "includeStackTraces"]),
       new Set(["types"]),
-    );
-    assertAllowedOptions(
-      options,
-      ["types", "pageSize", "pageIdx", "includePreservedMessages", "includeStackTraces", "serviceWorkerId"],
+      new Set(["types", "pageSize", "pageIdx", "includePreservedMessages", "includeStackTraces", "serviceWorkerId"]),
       cmd
     );
     const pageId = requirePageId(globals, positionals);
@@ -875,8 +1131,12 @@ function resolveBuiltinAlias(cmd, rawArgs, globals) {
     if (options.types !== undefined) args.types = options.types.map(String);
     if (options.pageSize !== undefined) args.pageSize = parseStrictInt(options.pageSize, "page-size");
     if (options.pageIdx !== undefined) args.pageIdx = parseStrictInt(options.pageIdx, "page-idx");
-    if (options.includePreservedMessages !== undefined) args.includePreservedMessages = Boolean(options.includePreservedMessages);
-    if (options.includeStackTraces !== undefined) args.includeStackTraces = Boolean(options.includeStackTraces);
+    if (options.includePreservedMessages !== undefined) {
+      args.includePreservedMessages = parseStrictBoolean(options.includePreservedMessages, "include-preserved-messages");
+    }
+    if (options.includeStackTraces !== undefined) {
+      args.includeStackTraces = parseStrictBoolean(options.includeStackTraces, "include-stack-traces");
+    }
     if (options.serviceWorkerId !== undefined) args.serviceWorkerId = String(options.serviceWorkerId);
     return { tool: "list_console_messages", arguments: args };
   }
@@ -886,23 +1146,32 @@ function resolveBuiltinAlias(cmd, rawArgs, globals) {
       rawArgs,
       new Set(["includePreservedRequests"]),
       new Set(["resourceTypes"]),
+      new Set(["resourceTypes", "pageSize", "pageIdx", "includePreservedRequests"]),
+      cmd
     );
-    assertAllowedOptions(options, ["resourceTypes", "pageSize", "pageIdx", "includePreservedRequests"], cmd);
     const pageId = requirePageId(globals, positionals);
     const args = { pageId };
     if (options.resourceTypes !== undefined) args.resourceTypes = options.resourceTypes.map(String);
     if (options.pageSize !== undefined) args.pageSize = parseStrictInt(options.pageSize, "page-size");
     if (options.pageIdx !== undefined) args.pageIdx = parseStrictInt(options.pageIdx, "page-idx");
-    if (options.includePreservedRequests !== undefined) args.includePreservedRequests = Boolean(options.includePreservedRequests);
+    if (options.includePreservedRequests !== undefined) {
+      args.includePreservedRequests = parseStrictBoolean(options.includePreservedRequests, "include-preserved-requests");
+    }
     return { tool: "list_network_requests", arguments: args };
   }
 
   if (normalized === "logpoints" || normalized === "set_logpoints") {
-    const { positionals, options } = parseSubcommandTokens(rawArgs, new Set(["clear"]), new Set(["logpoints"]));
-    assertAllowedOptions(options, ["clear", "logpoints"], cmd);
+    const { positionals, options } = parseSubcommandTokens(
+      rawArgs,
+      new Set(["clear"]),
+      new Set(["logpoints"]),
+      new Set(["clear", "logpoints"]),
+      cmd
+    );
     const pageId = requirePageId(globals, positionals);
-    const logpoints = options.clear ? [] : (options.logpoints ?? positionals).map(String);
-    if (!options.clear && logpoints.length === 0) {
+    const clear = options.clear !== undefined ? parseStrictBoolean(options.clear, "clear") : false;
+    const logpoints = clear ? [] : (options.logpoints ?? positionals).map(String);
+    if (!clear && logpoints.length === 0) {
       throw new Error("logpoints requires at least one '<url>:<line> <expr>' or --clear to remove all");
     }
     return { tool: "set_logpoints", arguments: { pageId, logpoints } };
@@ -911,20 +1180,12 @@ function resolveBuiltinAlias(cmd, rawArgs, globals) {
   return null;
 }
 
-async function bindDynamicTool(toolName, rawArgs, globals, { allowAutoSpawn = true } = {}) {
-  let listResp;
-  if (allowAutoSpawn) {
-    listResp = await requestDaemon("list_tools", { callerOwner: resolveOwner(globals.owner, process.env) }, {
-      env: process.env,
-      devConfig: globals.devConfig,
-    });
-  } else {
-    listResp = await sendRawRequest("list_tools", { callerOwner: resolveOwner(globals.owner, process.env) }, {
-      env: process.env,
-      timeoutMs: 2500,
-    }).catch(() => null);
-    if (!listResp?.ok) return null;
-  }
+async function bindDynamicTool(toolName, rawArgs, globals) {
+  const listResp = await requestDaemon(
+    "list_tools",
+    { callerOwner: resolveOwner(globals.owner, process.env) },
+    { env: process.env, devConfig: globals.devConfig }
+  );
   if (!listResp?.ok || !Array.isArray(listResp.tools)) {
     throw new Error(listResp?.error || "Could not discover upstream tools");
   }
@@ -935,17 +1196,14 @@ async function bindDynamicTool(toolName, rawArgs, globals, { allowAutoSpawn = tr
       `Unknown command or tool '${toolName}'. Run 'my-agent-browser --help' or 'my-agent-browser tools' to list available tools.`
     );
   }
-  if (globals.help) {
-    formatToolHelp(tool);
-    return { printedHelp: true };
-  }
 
   const schema = tool.inputSchema || { properties: {}, required: [] };
   const props = schema.properties || {};
   const boolFlags = new Set(Object.entries(props).filter(([, s]) => s.type === "boolean").map(([k]) => k));
   const arrayFlags = new Set(Object.entries(props).filter(([, s]) => s.type === "array").map(([k]) => k));
 
-  const { positionals, options } = parseSubcommandTokens(rawArgs, boolFlags, arrayFlags);
+  const allowedFlags = new Set([...Object.keys(props), "argsJson"]);
+  const { positionals, options } = parseSubcommandTokens(rawArgs, boolFlags, arrayFlags, allowedFlags, tool.name);
   let bound = {};
 
   if (options.argsJson !== undefined) {
@@ -977,13 +1235,15 @@ async function bindDynamicTool(toolName, rawArgs, globals, { allowAutoSpawn = tr
   }
 
   for (const [optKey, optVal] of Object.entries(options)) {
-    if (!Object.hasOwn(props, optKey)) {
+    const snake = camelToSnake(optKey);
+    const schemaKey = Object.hasOwn(props, optKey) ? optKey : Object.hasOwn(props, snake) ? snake : null;
+    if (!schemaKey) {
       throw new Error(`Unknown option '--${optKey}' for ${tool.name}. Run 'my-agent-browser ${tool.name} --help'.`);
     }
-    bound[optKey] = coerceBySchema(optVal, props[optKey], optKey);
+    bound[schemaKey] = coerceBySchema(optVal, props[schemaKey], optKey);
   }
 
-  return { tool: tool.name, arguments: normalizeToolPaths(tool.name, bound), isEval: tool.name === "evaluate_script" };
+  return { tool: tool.name, arguments: normalizeToolPaths(tool.name, bound) };
 }
 
 function computeRpcTimeout(globals, toolArgs) {
@@ -995,6 +1255,45 @@ function computeRpcTimeout(globals, toolArgs) {
   return DEFAULT_RPC_TIMEOUT_MS;
 }
 
+const TOOL_CATEGORY_FALLBACK = {
+  fill_form: "Input automation",
+  wait_for: "Navigation automation",
+};
+
+async function printGroupedTools(tools) {
+  const catalog = await loadOfflineToolCatalog();
+  const groups = new Map();
+  for (const t of tools) {
+    const cat = catalog[t.name]?.category || TOOL_CATEGORY_FALLBACK[t.name] || "Other";
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(t);
+  }
+  const order = [
+    "Navigation automation",
+    "Input automation",
+    "Debugging",
+    "Network",
+    "Network mocks",
+    "Emulation",
+    "Performance",
+    "Memory",
+    "WebAuthn",
+    "Other",
+  ];
+  const sortedCats = [...groups.keys()].sort((a, b) => {
+    const ia = order.indexOf(a);
+    const ib = order.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
+  });
+  for (const cat of sortedCats) {
+    console.log(`\n${cat} (${groups.get(cat).length}):`);
+    for (const t of groups.get(cat)) {
+      const summary = (t.description || "").split("\n")[0].slice(0, 88);
+      console.log(`  ${t.name.padEnd(34)} ${summary}`);
+    }
+  }
+}
+
 async function main() {
   const { globals, command, args } = parseGlobalAndCommandArgs(process.argv.slice(2));
 
@@ -1003,17 +1302,13 @@ async function main() {
     return;
   }
 
-  // Handle --help offline without ever spawning a daemon or mutating state!
+  // Handle --help offline without spawning a daemon or mutating homeDir.
   if (!command || globals.help) {
-    if (command && !LIFECYCLE_COMMANDS.has(command)) {
-      const targetName = command === "call" && args[0] ? args[0] : (ALIAS_TO_TOOL[toSnakeCase(command)] || command);
-      const res = await bindDynamicTool(targetName, [], globals, { allowAutoSpawn: false }).catch(() => null);
-      if (!res?.printedHelp) {
-        printMainHelp();
-      }
-      return;
+    if (command) {
+      await printCommandHelp(command, args);
+    } else {
+      printMainHelp();
     }
-    printMainHelp();
     return;
   }
 
@@ -1036,13 +1331,23 @@ async function main() {
       else console.log(p);
       return;
     }
+    if (sub === "show") {
+      const loaded = loadConfig({ env: process.env, devConfig: globals.devConfig });
+      const effective = resolveEffectiveConfig(loaded.config);
+      if (globals.json) {
+        console.log(JSON.stringify({ ok: true, path: loaded.configPath, exists: loaded.exists, config: effective }));
+      } else {
+        console.log(JSON.stringify(effective, null, 2));
+      }
+      return;
+    }
     if (sub === "validate") {
       const loaded = loadConfig({ env: process.env, devConfig: globals.devConfig });
       if (globals.json) console.log(JSON.stringify({ ok: true, exists: loaded.exists, path: loaded.configPath }));
       else console.log(loaded.exists ? `Valid config: ${loaded.configPath}` : `No config file at ${loaded.configPath} (using built-in defaults)`);
       return;
     }
-    throw new Error(`Unknown config subcommand '${sub}'. Expected: init | path | validate`);
+    throw new Error(`Unknown config subcommand '${sub}'. Expected: init | path | show | validate`);
   }
 
   const loaded = loadConfig({ env: process.env, devConfig: globals.devConfig });
@@ -1089,7 +1394,7 @@ async function main() {
         ? "never"
         : `${daemon.idleTimeout} (idle ${formatDuration(daemon.idleMs)})`;
       console.log(`Daemon: running (PID ${daemon.pid}, v${daemon.version})`);
-      console.log(`Browser: ${daemon.browserMode} (${daemon.browserReady ? "active" : "lazy-pending"}${daemon.browserPid ? `, PID ${daemon.browserPid}` : ""})`);
+      console.log(`Browser: ${daemon.browserMode} (${daemon.browserReady ? "active" : "standby"}${daemon.browserPid ? `, PID ${daemon.browserPid}` : ""})`);
       console.log(`Idle timeout: ${autoClose}`);
       console.log(
         `Active owners: ${
@@ -1107,10 +1412,14 @@ async function main() {
       }
     }
   } else if (command === "start") {
-    const { options } = parseSubcommandTokens(args, new Set(["headless", "headed"]));
-    assertAllowedOptions(options, ["idleTimeout", "headless", "headed"], "start");
+    const { options } = parseSubcommandTokens(args, new Set(["headless", "headed"]), new Set(), new Set(["idleTimeout", "headless", "headed"]), "start");
     if (options.idleTimeout !== undefined) parseIdleTimeout(options.idleTimeout);
-    const headless = options.headed ? false : options.headless ? true : undefined;
+    const headless =
+      options.headed !== undefined && parseStrictBoolean(options.headed, "headed")
+        ? false
+        : options.headless !== undefined
+          ? parseStrictBoolean(options.headless, "headless")
+          : undefined;
     const res = await ensureDaemon({
       env: process.env,
       devConfig: globals.devConfig,
@@ -1149,8 +1458,7 @@ async function main() {
       else console.log("Stopped browser daemon" + (resp.closedManagedBrowser ? " and closed managed browser." : "."));
     }
   } else if (command === "restart") {
-    const { options } = parseSubcommandTokens(args, new Set(["headless", "headed"]));
-    assertAllowedOptions(options, ["idleTimeout", "headless", "headed"], "restart");
+    const { options } = parseSubcommandTokens(args, new Set(["headless", "headed"]), new Set(), new Set(["idleTimeout", "headless", "headed"]), "restart");
     if (options.idleTimeout !== undefined) parseIdleTimeout(options.idleTimeout);
     const existing = await inspectDaemon({ env: process.env, callerOwner });
     if (existing) {
@@ -1164,7 +1472,12 @@ async function main() {
       }
       await waitForDaemonExit(process.env, 6000);
     }
-    const headless = options.headed ? false : options.headless ? true : undefined;
+    const headless =
+      options.headed !== undefined && parseStrictBoolean(options.headed, "headed")
+        ? false
+        : options.headless !== undefined
+          ? parseStrictBoolean(options.headless, "headless")
+          : undefined;
     await ensureDaemon({
       env: process.env,
       devConfig: globals.devConfig,
@@ -1183,14 +1496,11 @@ async function main() {
     if (globals.json) {
       console.log(JSON.stringify({ ok: true, count: resp.tools.length, tools: resp.tools }));
     } else {
-      for (const t of resp.tools) {
-        const summary = (t.description || "").split("\n")[0].slice(0, 90);
-        console.log(`${t.name.padEnd(32)} ${summary}`);
-      }
+      console.log(`${resp.tools.length} tools enabled:`);
+      await printGroupedTools(resp.tools);
     }
   } else if (command === "claim") {
-    const { positionals, options } = parseSubcommandTokens(args);
-    assertAllowedOptions(options, [], "claim");
+    const { positionals } = parseSubcommandTokens(args, new Set(), new Set(), new Set(), "claim");
     const pageId = requirePageId(globals, positionals);
     const resp = await requestDaemon(
       "claim",
@@ -1204,8 +1514,7 @@ async function main() {
     if (globals.json) console.log(JSON.stringify(resp));
     else console.log(`Claimed page ${resp.pageId} for owner '${resp.owner}'.`);
   } else if (command === "release") {
-    const { positionals, options } = parseSubcommandTokens(args);
-    assertAllowedOptions(options, [], "release");
+    const { positionals } = parseSubcommandTokens(args, new Set(), new Set(), new Set(), "release");
     const pageId = requirePageId(globals, positionals);
     const resp = await requestDaemon(
       "release",
@@ -1222,7 +1531,6 @@ async function main() {
     const targetTool = args[0];
     if (!targetTool) throw new Error("call requires <toolName>");
     const invocation = await bindDynamicTool(targetTool, args.slice(1), globals);
-    if (!invocation) return;
     const resp = await requestDaemon(
       "call_tool",
       {
@@ -1238,12 +1546,10 @@ async function main() {
         timeoutMs: computeRpcTimeout(globals, invocation.arguments),
       }
     );
-    outputToolResponse(resp, globals, { isEval: invocation.isEval });
+    outputToolResponse(resp, globals, { toolName: invocation.tool });
   } else {
     const builtin = resolveBuiltinAlias(command, args, globals);
     const invocation = builtin || (await bindDynamicTool(command, args, globals));
-    if (!invocation) return;
-
     const resp = await requestDaemon(
       "call_tool",
       {
@@ -1262,7 +1568,7 @@ async function main() {
     if (builtin?.ownerFilter && Array.isArray(resp.pages)) {
       resp.pages = resp.pages.filter((p) => p.owner === builtin.ownerFilter);
     }
-    outputToolResponse(resp, globals, { isEval: invocation.isEval });
+    outputToolResponse(resp, globals, { toolName: invocation.tool });
   }
 
   if (!process.exitCode && AUTO_UPDATE_COMMANDS.has(command)) {
@@ -1286,7 +1592,9 @@ if (require.main === module) {
 module.exports = {
   parseGlobalAndCommandArgs,
   parseSubcommandTokens,
+  parseStrictBoolean,
   resolveBuiltinAlias,
   normalizeToolPaths,
   extractRawEvalValue,
+  extractSavedShotPath,
 };

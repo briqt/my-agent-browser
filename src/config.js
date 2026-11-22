@@ -29,14 +29,7 @@ const DEFAULT_CONFIG = {
     debuggingPort: 39813,
     extraArgs: [...DEFAULT_EXTRA_ARGS],
     browserUrl: "",
-    lazyStart: true,
     idleTimeout: DEFAULT_IDLE_TIMEOUT,
-  },
-  mcp: {
-    features: [],
-    flags: [],
-    backgroundNewPages: false,
-    batchActions: true,
   },
   stealth: {
     evaluateScript: true,
@@ -60,7 +53,7 @@ const CONFIG_SCHEMA = {
         },
         headless: {
           type: "boolean",
-          description: "Whether to run Chrome in headless mode",
+          description: "Run Chrome in headless mode",
         },
         proxy: {
           type: "string",
@@ -68,11 +61,11 @@ const CONFIG_SCHEMA = {
         },
         viewport: {
           type: "string",
-          description: "Window size: \"WIDTHxHEIGHT\" (e.g. 1280x720), \"maximized\" (falls back to 1920x1080 in headless), or empty for Chrome default",
+          description: "Window size: \"WIDTHxHEIGHT\" (e.g. 1280x720), \"maximized\" (1920x1080 in headless), or empty for Chrome default",
         },
         display: {
           type: "string",
-          description: "Linux only: fallback DISPLAY value when unset (e.g. \":0\"). WSLg is auto-detected",
+          description: "Linux only: fallback DISPLAY value when unset (e.g. \":0\")",
         },
         debuggingPort: {
           type: "integer",
@@ -86,43 +79,12 @@ const CONFIG_SCHEMA = {
         },
         browserUrl: {
           type: "string",
-          description: "Direct CDP HTTP URL of an existing Chrome instance (skips launching or closing Chrome)",
-        },
-        lazyStart: {
-          type: "boolean",
-          description: "Delay launching Chrome until the first browser tool call (default true)",
-          default: true,
+          description: "Existing Chrome CDP HTTP or WebSocket URL (skips launching or closing Chrome)",
         },
         idleTimeout: {
           type: ["string", "integer"],
-          description: "Auto-close idle browser/daemon after duration with unit (e.g. \"30m\", \"1h\", \"300s\") or \"never\" / 0 to never auto-close",
+          description: "Auto-close idle browser/daemon after duration (e.g. \"30m\", \"1h\", \"300s\") or \"never\" / 0",
           default: "30m",
-        },
-      },
-    },
-    mcp: {
-      type: "object",
-      description: "chrome-devtools-mcp engine settings",
-      properties: {
-        features: {
-          type: "array",
-          items: { type: "string" },
-          description: "Additional flags forwarded to chrome-devtools-mcp",
-        },
-        flags: {
-          type: "array",
-          items: { type: "string" },
-          description: "Additional CLI flags forwarded to chrome-devtools-mcp",
-        },
-        backgroundNewPages: {
-          type: "boolean",
-          description: "When true, supply background: true on new_page calls that omit background. Explicit background arguments always win",
-          default: false,
-        },
-        batchActions: {
-          type: "boolean",
-          default: true,
-          description: "Enable bounded compound batch execution (batch / run_actions)",
         },
       },
     },
@@ -132,12 +94,12 @@ const CONFIG_SCHEMA = {
       properties: {
         evaluateScript: {
           type: "boolean",
-          description: "Rewrite inline evaluate_script functions so page stack traces hide pptr: and MCP install paths. Default true",
+          description: "Rewrite inline evaluate_script functions so stack traces hide pptr: and local paths",
           default: true,
         },
         sourceUrl: {
           type: "string",
-          description: "Source URL token shown in rewritten evaluate_script stack traces (single non-whitespace token)",
+          description: "Source URL token shown in rewritten evaluate_script stack traces",
           default: "eval.js",
         },
       },
@@ -145,7 +107,7 @@ const CONFIG_SCHEMA = {
     disable_update_check: {
       type: "boolean",
       default: false,
-      description: "Disable CLI update networking and cached update/announcement reminders",
+      description: "Disable CLI update checks and cached update/announcement reminders",
     },
   },
 };
@@ -169,9 +131,8 @@ function parseIdleTimeout(value) {
   const unit = match[2];
   const factor = unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "m" ? 60_000 : 3_600_000;
   const ms = amount * factor;
-  // Node setTimeout caps at 2^31 - 1 ms (~24.8 days).
   if (!Number.isSafeInteger(ms) || ms > 2_147_483_647) {
-    throw new Error("config.browser.idleTimeout exceeds maximum timer duration (~24 days); use \"never\" instead");
+    throw new Error('config.browser.idleTimeout exceeds maximum timer duration (~24 days); use "never" instead');
   }
   return ms;
 }
@@ -208,6 +169,29 @@ function validateConfig(config) {
     if (p < 1 || p > 65535) throw new Error("config.browser.debuggingPort must be between 1 and 65535");
   }
   return config;
+}
+
+function resolveEffectiveConfig(userConfig = {}) {
+  const b = userConfig.browser || {};
+  const s = userConfig.stealth || {};
+  return {
+    browser: {
+      userDataDir: b.userDataDir ?? DEFAULT_CONFIG.browser.userDataDir,
+      headless: b.headless ?? DEFAULT_CONFIG.browser.headless,
+      proxy: b.proxy ?? DEFAULT_CONFIG.browser.proxy,
+      viewport: b.viewport !== undefined ? b.viewport : DEFAULT_CONFIG.browser.viewport,
+      display: b.display ?? DEFAULT_CONFIG.browser.display,
+      debuggingPort: b.debuggingPort ?? DEFAULT_CONFIG.browser.debuggingPort,
+      extraArgs: Array.isArray(b.extraArgs) ? [...b.extraArgs] : [...DEFAULT_EXTRA_ARGS],
+      browserUrl: b.browserUrl ?? DEFAULT_CONFIG.browser.browserUrl,
+      idleTimeout: b.idleTimeout !== undefined ? b.idleTimeout : DEFAULT_CONFIG.browser.idleTimeout,
+    },
+    stealth: {
+      evaluateScript: s.evaluateScript ?? DEFAULT_CONFIG.stealth.evaluateScript,
+      sourceUrl: s.sourceUrl ?? DEFAULT_CONFIG.stealth.sourceUrl,
+    },
+    disable_update_check: userConfig.disable_update_check ?? DEFAULT_CONFIG.disable_update_check,
+  };
 }
 
 function getConfigCandidates({ env = process.env, devConfig = false, repoSkillDir } = {}) {
@@ -263,6 +247,7 @@ module.exports = {
   CONFIG_SCHEMA,
   parseIdleTimeout,
   validateConfig,
+  resolveEffectiveConfig,
   getConfigCandidates,
   loadConfig,
   initConfig,

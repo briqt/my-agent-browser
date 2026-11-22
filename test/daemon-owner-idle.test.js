@@ -5,23 +5,18 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const http = require("node:http");
 const { spawnSync } = require("node:child_process");
 
 const CLI_PATH = path.resolve(__dirname, "..", "src", "cli.js");
 
 function runCli(args, env, timeout = 15000) {
-  const res = spawnSync(process.execPath, [CLI_PATH, "--no-update-check", ...args], {
+  return spawnSync(process.execPath, [CLI_PATH, "--no-update-check", ...args], {
     env,
     encoding: "utf8",
     timeout,
   });
-  return res;
 }
 
-// Create a fake chrome-devtools-mcp package in a temp directory so daemon IPC,
-// owner locks, screenshot saving, and idle timeout can be tested deterministically
-// in milliseconds without launching a real browser!
 function createMockEnvironment({ idleTimeout = "30m" } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mab-daemon-test-"));
   const home = path.join(root, "home");
@@ -40,7 +35,6 @@ function createMockEnvironment({ idleTimeout = "30m" } = {}) {
     })
   );
 
-  // Mock MCP server over stdio keeping in-memory tabs
   fs.writeFileSync(
     mockMcpEntry,
     `#!/usr/bin/env node
@@ -76,13 +70,17 @@ process.stdin.on("data", chunk => {
         for (const p of pages) p.selected = false;
         const created = { id: ++nextId, title: "Tab " + nextId, url: a.url, selected: true };
         pages.push(created);
-        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { isError: false, content: [{ type: "text", text: formatPages() }], structuredContent: { pages } } }) + "\\n");
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { isError: false, content: [{ type: "text", text: formatPages() }], structuredContent: { pages, backgroundUsed: a.background } } }) + "\\n");
       } else if (name === "list_pages") {
         process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { isError: false, content: [{ type: "text", text: formatPages() }], structuredContent: { pages } } }) + "\\n");
       } else if (name === "close_page") {
-        const idx = pages.findIndex(p => p.id === a.pageId);
-        if (idx !== -1) pages.splice(idx, 1);
-        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { isError: false, content: [{ type: "text", text: formatPages() }], structuredContent: { pages } } }) + "\\n");
+        if (pages.length > 1) {
+          const idx = pages.findIndex(p => p.id === a.pageId);
+          if (idx !== -1) pages.splice(idx, 1);
+          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { isError: false, content: [{ type: "text", text: formatPages() }], structuredContent: { pages } } }) + "\\n");
+        } else {
+          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { isError: false, content: [{ type: "text", text: "The last open page cannot be closed." }], structuredContent: { pages } } }) + "\\n");
+        }
       } else if (name === "take_snapshot") {
         process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { isError: false, content: [{ type: "text", text: "uid=1_1 button \\"OK\\"" }], structuredContent: {} } }) + "\\n");
       } else if (name === "take_screenshot") {
@@ -98,8 +96,6 @@ process.stdin.on("data", chunk => {
   );
   fs.chmodSync(mockMcpEntry, 0o755);
 
-  // Use direct browserUrl mode + NODE_PATH override? No, resolveMcpPackage uses bundled first unless we override!
-  // Wait: let's also point browserUrl to a dummy local URL so daemon runs in direct mode without launching real Chrome!
   fs.writeFileSync(
     path.join(home, "config.json"),
     JSON.stringify({
@@ -111,7 +107,6 @@ process.stdin.on("data", chunk => {
     })
   );
 
-  // Redirect require.resolve('chrome-devtools-mcp/package.json') in child daemon via NODE_OPTIONS --require hook
   const preload = path.join(root, "preload-mock-mcp.js");
   fs.writeFileSync(
     preload,
@@ -140,36 +135,42 @@ Module._resolveFilename = function(request, parent, isMain, options) {
   };
 }
 
-test("status and doctor never spawn daemon; owner locks protect tabs and stop/restart", () => {
+test("open always uses background, supports --raw & top-level pageId, and owner locks protect tabs and stop", () => {
   const ctx = createMockEnvironment({ idleTimeout: "never" });
   try {
-    // 1. Offline status does not start daemon
     const st0 = JSON.parse(runCli(["status", "--json"], ctx.env).stdout);
     assert.equal(st0.running, false);
     assert.equal(st0.configuredIdleTimeout, "never");
 
-    // 2. Agent A opens a tab with --owner agent-a
+    // Agent A opens a tab with --json -> verifies background: true and top-level pageId
     const openA = runCli(["open", "https://example.com/a", "--owner", "agent-a", "--json"], ctx.env);
     assert.equal(openA.status, 0, openA.stderr);
+    const openData = JSON.parse(openA.stdout);
+    assert.equal(openData.pageId, 2);
+    assert.equal(openData.structuredContent.backgroundUsed, true);
 
-    // 3. Agent B checks pages & status: discovers agent-a owns page 2 and canStopSafely is false!
+    // open --raw prints bare numeric pageId
+    const rawOpen = runCli(["open", "https://example.com/b", "--owner", "agent-a", "--raw"], ctx.env);
+    assert.equal(rawOpen.status, 0, rawOpen.stderr);
+    assert.equal(rawOpen.stdout.trim(), "3");
+    assert.equal(runCli(["close-page", "3", "--owner", "agent-a"], ctx.env).status, 0);
+
+    // Agent B checks status: sees agent-a owns page 2 and canStopSafely is false
     const stB = JSON.parse(runCli(["status", "--owner", "agent-b", "--json"], ctx.env).stdout);
     assert.equal(stB.running, true);
-    assert.equal(stB.idleTimeout, "never");
     assert.equal(stB.canStopSafely, false);
     assert.deepEqual(stB.activeOwners.map((o) => o.owner), ["agent-a"]);
     assert.deepEqual(stB.activeOwners[0].pageIds, [2]);
 
     // Same owner sees canStopSafely: true
-    const stA = JSON.parse(runCli(["status", "--owner", "agent-a", "--json"], ctx.env).stdout);
-    assert.equal(stA.canStopSafely, true);
+    assert.equal(JSON.parse(runCli(["status", "--owner", "agent-a", "--json"], ctx.env).stdout).canStopSafely, true);
 
-    // 4. Read-only snap on page 2 works for Agent B
+    // Read-only snap works for Agent B
     const snapB = runCli(["snap", "2", "--owner", "agent-b"], ctx.env);
     assert.equal(snapB.status, 0, snapB.stderr);
     assert.match(snapB.stdout, /uid=1_1/);
 
-    // 5. Mutating click & close-page on page 2 by Agent B (or unset owner) are rejected!
+    // Mutating click & stop are rejected for Agent B
     const clickB = runCli(["click", "2", "1_1", "--owner", "agent-b"], ctx.env);
     assert.equal(clickB.status, 1);
     assert.match(clickB.stderr, /Page 2 is owned by 'agent-a', caller is 'agent-b'/);
@@ -178,15 +179,15 @@ test("status and doctor never spawn daemon; owner locks protect tabs and stop/re
     assert.equal(stopB.status, 1);
     assert.match(stopB.stderr, /Refusing to stop browser: owner 'agent-a' holds page\(s\) \[2\]/);
 
-    // 6. Inline screenshot saves to disk instead of dumping base64
-    const shot = JSON.parse(runCli(["shot", "2", "--json"], ctx.env).stdout);
-    assert.equal(shot.ok, true);
-    const savedFile = shot.structuredContent.savedImages[0].filePath;
+    // shot --raw saves PNG to disk and outputs bare path
+    const shotRaw = runCli(["shot", "2", "--raw"], ctx.env);
+    assert.equal(shotRaw.status, 0, shotRaw.stderr);
+    const savedFile = shotRaw.stdout.trim();
     assert.ok(fs.existsSync(savedFile));
     assert.ok(fs.statSync(savedFile).size > 20);
     fs.unlinkSync(savedFile);
 
-    // 7. Agent A can click and close its own tab; afterwards Agent B can safely stop daemon
+    // Agent A closes its tab -> Agent B can stop cleanly
     assert.equal(runCli(["click", "2", "1_1", "--owner", "agent-a"], ctx.env).status, 0);
     assert.equal(runCli(["close-page", "2", "--owner", "agent-a"], ctx.env).status, 0);
 
@@ -198,7 +199,7 @@ test("status and doctor never spawn daemon; owner locks protect tabs and stop/re
   }
 });
 
-test("claim, release, and --force takeover work as expected", () => {
+test("claim, release, --force takeover, and last-tab close-page lock release", () => {
   const ctx = createMockEnvironment({ idleTimeout: "30m" });
   try {
     assert.equal(runCli(["pages"], ctx.env).status, 0);
@@ -207,6 +208,13 @@ test("claim, release, and --force takeover work as expected", () => {
     assert.equal(runCli(["click", "1", "1_1", "--owner", "beta", "--force"], ctx.env).status, 0);
     assert.equal(runCli(["release", "1", "--owner", "alpha"], ctx.env).status, 0);
     assert.equal(runCli(["click", "1", "1_1", "--owner", "beta"], ctx.env).status, 0);
+
+    // Closing the last remaining tab cannot close it in Chrome, but still releases alpha's owner lock
+    assert.equal(runCli(["claim", "1", "--owner", "alpha"], ctx.env).status, 0);
+    assert.equal(runCli(["close-page", "1", "--owner", "alpha"], ctx.env).status, 0);
+    const st = JSON.parse(runCli(["status", "--owner", "beta", "--json"], ctx.env).stdout);
+    assert.equal(st.canStopSafely, true);
+    assert.deepEqual(st.activeOwners, []);
   } finally {
     ctx.cleanup();
   }

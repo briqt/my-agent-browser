@@ -6,7 +6,7 @@
 // consuming virtually zero context and instructing the agent/user to remove
 // this obsolete MCP server entry and switch to the my-agent-browser CLI.
 
-const STUB_VERSION = "2.0.0";
+const STUB_VERSION = "2.1.0";
 const DEPRECATION_NOTICE =
   "my-agent-browser v2.0+ no longer uses MCP — it is now a standalone CLI ('my-agent-browser') with zero context overhead. " +
   "Action required: (1) Install or update the CLI with 'npm i -g github:briqt/my-agent-browser --install-links'; " +

@@ -11,7 +11,6 @@ const { StringDecoder } = require("node:string_decoder");
 
 const {
   VERSION,
-  TESTED_MCP_VERSION,
   DEFAULT_PORT,
   DEFAULT_IDLE_TIMEOUT,
   getHomeDir,
@@ -32,7 +31,6 @@ const {
 } = require("./chrome.js");
 const { rewriteClientRequest } = require("./stealth.js");
 const { McpSession } = require("./mcp-session.js");
-const { BatchSession } = require("./batch-session.js");
 
 const CHROME_ERROR_PATTERNS = [
   "Could not connect to Chrome",
@@ -60,6 +58,7 @@ const READ_ONLY_TOOLS = new Set([
   "list_network_requests",
   "get_network_request",
   "get_css_styles",
+  "performance_analyze_insight",
   "list_extensions",
   "list_webmcp_tools",
   "list_3p_developer_tools",
@@ -109,24 +108,18 @@ function responseHasStaleStateError(line) {
 async function closeChromeGracefully(pid) {
   if (!pid || !isProcessAlive(pid)) return;
   if (process.platform === "win32") {
-    try {
-      execFileSync("taskkill", ["/PID", String(pid), "/T"], { stdio: "ignore", windowsHide: true });
-    } catch {}
+    try { execFileSync("taskkill", ["/PID", String(pid), "/T"], { stdio: "ignore", windowsHide: true }); } catch {}
     const winDeadline = Date.now() + 2500;
     while (Date.now() < winDeadline) {
       if (!isProcessAlive(pid)) break;
       await new Promise((r) => setTimeout(r, 100));
     }
     if (isProcessAlive(pid)) {
-      try {
-        execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-      } catch {}
+      try { execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }); } catch {}
     }
     return;
   }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {}
+  try { process.kill(pid, "SIGTERM"); } catch {}
   const deadline = Date.now() + 2500;
   while (Date.now() < deadline) {
     if (!isProcessAlive(pid)) break;
@@ -177,7 +170,6 @@ async function startDaemonServer() {
       "chrome-devtools-mcp runtime not found. Reinstall CLI with: npm i -g github:briqt/my-agent-browser --install-links"
     );
   }
-  const batchActionsEnabled = config.mcp?.batchActions !== false && mcpInfo.version === TESTED_MCP_VERSION;
 
   let previousState = null;
   try { previousState = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch {}
@@ -213,10 +205,6 @@ async function startDaemonServer() {
   let rpcSerial = 0;
   const rpcWaiters = new Map();
 
-  function isSessionBusy() {
-    return inFlightCount > 0 || Boolean(mcpSession?.settling);
-  }
-
   function writeDaemonState() {
     fs.mkdirSync(homeDir, { recursive: true, mode: 0o700 });
     const tmp = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
@@ -241,16 +229,16 @@ async function startDaemonServer() {
   function scheduleIdleTimer() {
     clearTimeout(idleTimer);
     idleTimer = null;
-    if (shuttingDown || idleTimeoutMs <= 0 || isSessionBusy()) return;
+    if (shuttingDown || idleTimeoutMs <= 0 || inFlightCount > 0) return;
     const elapsed = Date.now() - lastActivityAt;
     const remaining = Math.max(100, idleTimeoutMs - elapsed);
     idleTimer = setTimeout(() => {
-      if (isSessionBusy()) {
+      if (inFlightCount > 0) {
         scheduleIdleTimer();
         return;
       }
       if (Date.now() - lastActivityAt >= idleTimeoutMs) {
-        void shutdown("idle_timeout");
+        void shutdown();
       } else {
         scheduleIdleTimer();
       }
@@ -322,9 +310,9 @@ async function startDaemonServer() {
   }
 
   function createSessionInstance() {
-    const args = buildMcpArgs(config, effectiveBrowserUrl, { structuredContent: true });
+    const args = buildMcpArgs(effectiveBrowserUrl);
     const childEnv = buildMcpEnv(process.env);
-    const raw = new McpSession({
+    const session = new McpSession({
       spawnChild: () =>
         spawn(process.execPath, [mcpInfo.binPath, ...args], {
           stdio: ["pipe", "pipe", "ignore"],
@@ -334,15 +322,6 @@ async function startDaemonServer() {
       rewriteLine: (line) => rewriteClientRequest(line, config),
       shouldRecover: (line) => chromeReady && responseHasStaleStateError(line),
       log: () => {},
-    });
-    const session = batchActionsEnabled ? new BatchSession(raw) : raw;
-
-    session.on("internalResponse", (line) => {
-      if (browserMode === "managed" && chromeReady && responseHasChromeError(line)) {
-        void probePort(port, 1500).then((alive) => {
-          if (!alive) return relaunchChrome();
-        });
-      }
     });
 
     session.on("line", (line) => {
@@ -476,10 +455,6 @@ async function startDaemonServer() {
       return [];
     }
     if (browserMode === "direct" && !mcpSession) return [];
-    if (mcpSession?.settling) {
-      // BatchSession rejects external tools/call while active/settling; preserve known pageOwners!
-      return fallbackPagesFromRegistry();
-    }
     try {
       const session = await ensureMcpSession();
       const call = sendMcpRpc(session, "tools/call", { name: "list_pages", arguments: {} });
@@ -557,9 +532,8 @@ async function startDaemonServer() {
     const activeOwners = buildActiveOwners(pages);
     const blockers = [];
 
-    const busyCount = inFlightCount + (mcpSession?.settling ? 1 : 0);
-    if (busyCount > 0) {
-      blockers.push({ type: "in_flight", inFlightCount: busyCount });
+    if (inFlightCount > 0) {
+      blockers.push({ type: "in_flight", inFlightCount });
     }
     for (const entry of activeOwners) {
       if (entry.owner !== callerOwner) {
@@ -576,7 +550,7 @@ async function startDaemonServer() {
     if (blockers.length > 0) {
       const parts = blockers.map((b) =>
         b.type === "in_flight"
-          ? `${b.inFlightCount} command(s) currently running or settling`
+          ? `${b.inFlightCount} command(s) currently running`
           : `owner '${b.owner}' holds page(s) [${b.pageIds.join(", ")}] (idle ${formatDuration(b.idleMs)})`
       );
       message =
@@ -657,7 +631,6 @@ async function startDaemonServer() {
         browserUrl: effectiveBrowserUrl,
         mcpVersion: mcpInfo.version,
         mcpPath: mcpInfo.binPath,
-        batchActionsEnabled,
         idleTimeout: idleTimeoutLabel,
         idleTimeoutMs,
         idleMs,
@@ -678,12 +651,8 @@ async function startDaemonServer() {
         return { ok: false, isError: true, blocked: true, blockers: safety.blockers, error: safety.message };
       }
       const willCloseBrowser = Boolean(browserMode === "managed" && weLaunchedChrome && managedChromePid);
-      setImmediate(() => { void shutdown("stop"); });
-      return {
-        ok: true,
-        stopped: true,
-        closedManagedBrowser: willCloseBrowser,
-      };
+      setImmediate(() => { void shutdown(); });
+      return { ok: true, stopped: true, closedManagedBrowser: willCloseBrowser };
     }
 
     if (method === "list_tools") {
@@ -802,10 +771,11 @@ async function startDaemonServer() {
         const nowIso = new Date().toISOString();
 
         const livePages = syncLivePagesFromStructured(result.structuredContent);
+        let openedId;
+        let openedPage;
 
         if (name === "new_page") {
-          // Record lockOwner even if an onload dialog caused isError: true while keeping the new tab open.
-          let openedId = Array.isArray(livePages)
+          openedId = Array.isArray(livePages)
             ? (livePages.find((p) => p.selected && (!preExistingIds || !preExistingIds.has(p.id)))?.id ??
                livePages.find((p) => p.selected)?.id)
             : undefined;
@@ -822,11 +792,21 @@ async function startDaemonServer() {
               lastActivityAt: nowIso,
               lastTool: "new_page",
             });
+            const pageInfo = Array.isArray(livePages) ? livePages.find((p) => p.id === openedId) : null;
+            openedPage = {
+              pageId: openedId,
+              url: pageInfo?.url || args.url || "",
+              title: pageInfo?.title || "",
+              owner: lockOwner,
+            };
           }
         } else if (!isError && name === "close_page" && Number.isFinite(args.pageId)) {
-          // Only delete owner lock if the page was actually closed (closing the last open tab leaves it alive).
           if (!Array.isArray(livePages) || !livePages.some((p) => p.id === args.pageId)) {
             pageOwners.delete(args.pageId);
+          } else {
+            // Release ownership when Chrome prevents closing the last remaining tab so stop/restart is not blocked.
+            const prev = pageOwners.get(args.pageId);
+            if (prev) prev.owner = "";
           }
         } else if (!isError && Number.isFinite(args.pageId)) {
           const prev = pageOwners.get(args.pageId);
@@ -858,6 +838,8 @@ async function startDaemonServer() {
           ...(isError ? { error: text || "Tool returned an error" } : {}),
           text,
           structuredContent: result.structuredContent || null,
+          ...(Number.isFinite(openedId) ? { pageId: openedId } : {}),
+          ...(openedPage ? { openedPage } : {}),
           ...(enrichedPages ? { pages: enrichedPages } : {}),
         };
       } finally {
@@ -875,8 +857,7 @@ async function startDaemonServer() {
     if (shuttingDown) return;
     shuttingDown = true;
     clearTimeout(idleTimer);
-    // Terminate MCP child and managed Chrome BEFORE closing the listening socket so
-    // `waitForDaemonExit()` only completes once userDataDir locks and ports are free.
+    // Stop engine and managed Chrome before closing the socket so waitForDaemonExit sees freed locks/ports.
     try { mcpSession?.end(); } catch {}
     if (browserMode === "managed" && weLaunchedChrome && managedChromePid) {
       await closeChromeGracefully(managedChromePid);
@@ -961,18 +942,14 @@ async function startDaemonServer() {
     if (oldUmask !== null) process.umask(oldUmask);
   }
 
-  if (browserMode === "managed" && config.browser.lazyStart === false) {
-    await ensureChromeReady();
-  }
-
   writeDaemonState();
   scheduleIdleTimer();
 
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
-    process.on(sig, () => { void shutdown(sig); });
+    process.on(sig, () => { void shutdown(); });
   }
-  process.on("uncaughtException", () => { void shutdown("uncaughtException"); });
-  process.on("unhandledRejection", () => { void shutdown("unhandledRejection"); });
+  process.on("uncaughtException", () => { void shutdown(); });
+  process.on("unhandledRejection", () => { void shutdown(); });
 
   if (typeof process.send === "function") {
     process.send({ ready: true, pid: process.pid, socketPath });

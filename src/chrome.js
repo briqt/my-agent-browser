@@ -153,11 +153,7 @@ function buildChromeArgs(b = {}, port, userDataDir) {
   if (b.proxy) args.push(`--proxy-server=${b.proxy}`);
   const viewport = b.viewport !== undefined ? b.viewport : "1280x720";
   if (viewport === "maximized") {
-    if (b.headless !== false) {
-      args.push("--window-size=1920,1080");
-    } else {
-      args.push("--start-maximized");
-    }
+    args.push(b.headless !== false ? "--window-size=1920,1080" : "--start-maximized");
   } else if (viewport) {
     const [w, h] = String(viewport).split("x");
     args.push(`--window-size=${w},${h}`);
@@ -165,8 +161,7 @@ function buildChromeArgs(b = {}, port, userDataDir) {
   const extraArgs = Array.isArray(b.extraArgs) ? b.extraArgs : DEFAULT_EXTRA_ARGS;
   for (const arg of extraArgs) args.push(arg);
 
-  // Open a clean about:blank tab instead of browser-internal chrome://newtab or edge://newtab
-  // targets, which upstream McpContext filters out and disposes mid-initialization.
+  // Open about:blank instead of chrome://newtab, which upstream McpContext filters out.
   if (!extraArgs.some((arg) => typeof arg === "string" && arg && !arg.startsWith("-"))) {
     args.push("about:blank");
   }
@@ -247,7 +242,6 @@ function resolveBinFromPackageJson(manifestPath, source) {
 function resolveMcpPackageFromCommandPath(commandPath) {
   if (!commandPath) return null;
   const shimDir = path.dirname(commandPath);
-  // Windows global npm prefix: <prefix>/chrome-devtools-mcp(.cmd) -> <prefix>/node_modules/chrome-devtools-mcp/package.json
   const candidates = [
     path.join(shimDir, "node_modules", "chrome-devtools-mcp", "package.json"),
     path.join(shimDir, "..", "lib", "node_modules", "chrome-devtools-mcp", "package.json"),
@@ -305,48 +299,19 @@ function localBrowserUrl(port) {
   return `http://127.0.0.1:${port}`;
 }
 
-function hasFlagMatching(flags, prefixes) {
-  return flags.some((flag) => prefixes.some((p) => flag === p || flag.startsWith(`${p}=`)));
-}
-
-function buildMcpArgs(config, browserUrl, { structuredContent = true } = {}) {
-  const m = (config && config.mcp) || {};
-  const userFlags = [...(m.features || []), ...(m.flags || [])];
-  const args = [`--browserUrl=${browserUrl}`];
-
-  if (!hasFlagMatching(userFlags, ["--usageStatistics", "--usage-statistics", "--no-usageStatistics", "--no-usage-statistics"])) {
-    args.push("--no-usage-statistics");
-  }
-  if (!hasFlagMatching(userFlags, ["--performanceCrux", "--performance-crux", "--no-performanceCrux", "--no-performance-crux"])) {
-    args.push("--no-performance-crux");
-  }
-  if (
-    structuredContent &&
-    !hasFlagMatching(userFlags, [
-      "--experimentalStructuredContent",
-      "--experimental-structured-content",
-      "--no-experimentalStructuredContent",
-      "--no-experimental-structured-content",
-    ])
-  ) {
-    args.push("--experimental-structured-content");
-  }
-  if (
-    !hasFlagMatching(userFlags, [
-      "--workspace",
-      "--filesystemRoot",
-      "--filesystem-root",
-      "--allowUnrestrictedPaths",
-      "--allow-unrestricted-paths",
-      "--no-allowUnrestrictedPaths",
-      "--no-allow-unrestricted-paths",
-    ])
-  ) {
-    args.push("--allow-unrestricted-paths");
-  }
-
-  for (const f of userFlags) args.push(f);
-  return args;
+function buildMcpArgs(browserUrl, { platform = process.platform } = {}) {
+  const isWs = /^wss?:\/\//i.test(browserUrl);
+  return [
+    isWs ? `--wsEndpoint=${browserUrl}` : `--browserUrl=${browserUrl}`,
+    "--no-usage-statistics",
+    "--no-performance-crux",
+    "--experimental-structured-content",
+    "--memory-debugging",
+    "--category-network-mocks",
+    "--category-webauthn",
+    "--experimental-vision",
+    platform === "win32" ? "--allow-unrestricted-paths" : "--workspace=/",
+  ];
 }
 
 function buildMcpEnv(baseEnv = process.env) {
@@ -357,14 +322,13 @@ function buildMcpEnv(baseEnv = process.env) {
     if (!entries.includes(addr)) entries.push(addr);
   }
   const merged = entries.join(",");
-  const env = {
+  return {
     ...baseEnv,
     no_proxy: merged,
     NO_PROXY: merged,
     CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS: "1",
     CHROME_DEVTOOLS_MCP_NO_CONFIG_DISCOVERY: "1",
   };
-  return env;
 }
 
 module.exports = {

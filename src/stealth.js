@@ -1,9 +1,6 @@
 "use strict";
 
-// puppeteer tags every evaluated script with `//# sourceURL=pptr:...`, embedding
-// the chrome-devtools-mcp install path (which normally contains the OS username).
-// puppeteer skips its own tag when the script already carries a sourceURL comment
-// matching SOURCE_URL_REGEX (see withSourcePuppeteerURLIfNone in puppeteer-core).
+// Matches Puppeteer's withSourcePuppeteerURLIfNone opt-out so pptr: URLs are suppressed.
 const SOURCE_URL_REGEX = /^[\x20\t]*\/\/[@#] sourceURL=\s{0,10}(\S*?)\s{0,10}$/m;
 const DEFAULT_STEALTH_SOURCE_URL = "eval.js";
 
@@ -32,29 +29,30 @@ function rewriteClientLine(line, stealth) {
   let msg;
   try { msg = JSON.parse(line); } catch { return line; }
   if (msg.method !== "tools/call") return line;
-  if (msg.params?.arguments?.format === "script" || msg.params?.arguments?.sourcePath !== undefined) return line;
   const params = msg.params;
   if (!params || params.name !== "evaluate_script") return line;
   const args = params.arguments;
   if (!args || typeof args.function !== "string") return line;
+  if (args.format === "script" || args.sourcePath !== undefined) return line;
   if (SOURCE_URL_REGEX.test(args.function)) return line;
   args.function = wrapStealthFunction(args.function, stealth.sourceUrl);
   try { return JSON.stringify(msg); } catch { return line; }
 }
 
-function rewriteNewPageBackground(line, config) {
-  if (config?.mcp?.backgroundNewPages !== true) return line;
+// Always open new tabs in the background to avoid stealing OS window focus.
+function rewriteNewPageBackground(line) {
+  if (!line.includes("new_page")) return line;
   let msg;
   try { msg = JSON.parse(line); } catch { return line; }
   if (msg?.method !== "tools/call" || msg.params?.name !== "new_page") return line;
   const args = msg.params.arguments;
-  if (!args || typeof args !== "object" || Array.isArray(args) || Object.hasOwn(args, "background")) return line;
+  if (!args || typeof args !== "object" || Array.isArray(args)) return line;
   args.background = true;
   try { return JSON.stringify(msg); } catch { return line; }
 }
 
 function rewriteClientRequest(line, config) {
-  return rewriteClientLine(rewriteNewPageBackground(line, config), stealthConfig(config));
+  return rewriteClientLine(rewriteNewPageBackground(line), stealthConfig(config));
 }
 
 module.exports = {

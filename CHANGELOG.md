@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.1.0 — 2026-11-22
+
+### CLI-First Simplification, Full Upstream Tool Access & Workflow Polish
+
+- **Remove legacy MCP-era config fields**: Dropped the entire `mcp` config section (`features`, `flags`, `backgroundNewPages`, `batchActions`) and `browser.lazyStart` from `config.json` and schema. Existing user config files containing old keys continue to load cleanly without error.
+- **Always open new tabs in the background**: Removed `mcp.backgroundNewPages` and `open --background` / `--foreground`; all `new_page` calls now unconditionally open in the background so automation never steals OS focus.
+- **Remove MCP-era `batch` / `run_actions` interceptor**: Deleted `src/batch-session.js` and `batch` subcommand. In CLI mode, agents naturally compose multi-step workflows with `fill-form`, `open --raw`, and shell `&&` fail-fast chains without blocking concurrent tabs or maintaining a wrapper state machine.
+- **Enable all 50 practical upstream `chrome-devtools-mcp@1.13.0` tools out of the box**: Zero-config default activation of `--memory-debugging` (13 offline V8 heap analysis tools), `--category-network-mocks` (`mock_network`, `remove_network_mock`), `--category-webauthn` (`configure_webauthn`), and `--experimental-vision` (`click_at` / `click-at`).
+- **Align upstream capabilities & protocols**:
+  - Use `--workspace=/` on POSIX (replacing deprecated `--allow-unrestricted-paths`; Windows retains `--allow-unrestricted-paths` for multi-drive access).
+  - Auto-detect `ws://` / `wss://` in `browser.browserUrl` and forward `--wsEndpoint=`.
+  - Add `--handle-before-unload` and `--init-script` to `reload`, `back`, and `forward`; treat `performance_analyze_insight` as read-only for owner lock checks.
+- **Workflow & CLI ergonomics improvements**:
+  - `open` now returns top-level `pageId` in `--json`, supports `--raw` to print the bare numeric ID for shell capture (`ID=$(my-agent-browser open ... --raw)`), and prints a concise single-line summary by default.
+  - `shot --raw` prints only the saved screenshot file path.
+  - `config show` prints the effective configuration with defaults merged.
+  - `tools` groups all 50 tools by DevTools category; `<command> --help` works completely offline for all built-in commands and all 50 upstream tools without starting the daemon.
+  - `close-page` now clears the tab's `owner` lock even when Chrome refuses to close its last remaining tab, preventing stale locks from blocking `stop` / `restart`.
+  - Fixed a CLI boolean parsing bug where inline `--<flag>=false` (e.g. `--wait-for-stable-dom=false`) was coerced to `true`, and added `--kebab-case` to `snake_case` parameter mapping in dynamic tool calls.
+
 ## v2.0.0 — 2026-11-22
 
 ### Breaking Architecture Upgrade: Standalone CLI + Managed Daemon (No MCP Required)

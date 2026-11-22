@@ -17,7 +17,6 @@ const {
   rewriteClientRequest,
 } = require("../src/stealth.js");
 const { McpSession } = require("../src/mcp-session.js");
-const { BatchSession } = require("../src/batch-session.js");
 
 test("SOURCE_URL_REGEX stays identical to bundled chrome-devtools-mcp 1.13.0 puppeteer", () => {
   const pkgJson = require.resolve("chrome-devtools-mcp/package.json");
@@ -38,7 +37,7 @@ test("wrapStealthFunction preserves args, return values, and sync/async errors",
   await assert.rejects(() => throwing(), /boom/);
 });
 
-test("rewriteClientRequest handles stealth and backgroundNewPages independently", () => {
+test("rewriteClientRequest rewrites inline eval and unconditionally forces background: true on new_page", () => {
   const evalCall = JSON.stringify({
     jsonrpc: "2.0",
     id: 1,
@@ -48,7 +47,7 @@ test("rewriteClientRequest handles stealth and backgroundNewPages independently"
   const rewrittenEval = JSON.parse(rewriteClientRequest(evalCall, { stealth: { evaluateScript: true, sourceUrl: "s.js" } }));
   assert.match(rewrittenEval.params.arguments.function, /sourceURL=s\.js/);
 
-  // Classic script and sourcePath pass through untouched
+  // Classic script passes through untouched
   const classicCall = JSON.stringify({
     jsonrpc: "2.0",
     id: 2,
@@ -57,15 +56,14 @@ test("rewriteClientRequest handles stealth and backgroundNewPages independently"
   });
   assert.equal(rewriteClientLine(classicCall, stealthConfig({})), classicCall);
 
+  // new_page ALWAYS gets background: true, even without config or when caller passed false
   const newPageCall = JSON.stringify({
     jsonrpc: "2.0",
     id: 3,
     method: "tools/call",
     params: { name: "new_page", arguments: { url: "https://example.com" } },
   });
-  assert.equal(rewriteNewPageBackground(newPageCall, { mcp: { backgroundNewPages: false } }), newPageCall);
-  const bg = JSON.parse(rewriteNewPageBackground(newPageCall, { mcp: { backgroundNewPages: true } }));
-  assert.equal(bg.params.arguments.background, true);
+  assert.equal(JSON.parse(rewriteNewPageBackground(newPageCall)).params.arguments.background, true);
 
   const explicitFg = JSON.stringify({
     jsonrpc: "2.0",
@@ -73,7 +71,7 @@ test("rewriteClientRequest handles stealth and backgroundNewPages independently"
     method: "tools/call",
     params: { name: "new_page", arguments: { url: "https://example.com", background: false } },
   });
-  assert.equal(JSON.parse(rewriteNewPageBackground(explicitFg, { mcp: { backgroundNewPages: true } })).params.arguments.background, false);
+  assert.equal(JSON.parse(rewriteClientRequest(explicitFg, {})).params.arguments.background, true);
 });
 
 function fakeChild(onInput) {
@@ -141,105 +139,4 @@ test("McpSession replaces stale child, replays initialize, and never replays mut
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(outputs.find((o) => o.id === 3).result.content[0].text, "ok-gen-2");
   session.end();
-});
-
-test("BatchSession validates upfront, stops on dialog/navigation boundaries, and suppresses secret values", async () => {
-  const tools = [
-    {
-      name: "fill",
-      inputSchema: { type: "object", required: ["pageId", "uid", "value"], properties: { pageId: { type: "number" }, uid: { type: "string" }, value: { type: "string" } } },
-    },
-    {
-      name: "click",
-      inputSchema: { type: "object", required: ["pageId", "uid"], properties: { pageId: { type: "number" }, uid: { type: "string" }, dblClick: { type: "boolean" } } },
-    },
-    {
-      name: "take_snapshot",
-      inputSchema: { type: "object", required: ["pageId"], properties: { pageId: { type: "number" }, filePath: { type: "string" } } },
-    },
-  ];
-
-  const raw = new EventEmitter();
-  raw.recovering = false;
-  raw.fail = (req, message) =>
-    raw.emit("line", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { isError: true, content: [{ type: "text", text: message }] } }));
-  raw.end = () => {};
-  raw.write = (line) => {
-    const msg = JSON.parse(line);
-    if (msg.method === "tools/list") {
-      setImmediate(() => raw.emit("line", JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { tools } })));
-    } else if (msg.method === "tools/call") {
-      setImmediate(() => {
-        if (msg.params.name === "fill" && msg.params.arguments.value === "SUPER_SECRET_FAIL") {
-          raw.emit(
-            "line",
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: msg.id,
-              result: { isError: true, content: [{ type: "text", text: "Error typing SUPER_SECRET_FAIL" }] },
-            })
-          );
-        } else {
-          raw.emit(
-            "line",
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: msg.id,
-              result: { isError: false, content: [{ type: "text", text: "done" }], structuredContent: { navigatedToUrl: "https://example.com/same" } },
-            })
-          );
-        }
-      });
-    }
-  };
-
-  const batch = new BatchSession(raw);
-  const replies = [];
-  batch.on("line", (l) => replies.push(JSON.parse(l)));
-
-  // Secret value must never be echoed when upstream fails
-  batch.write(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      id: 10,
-      method: "tools/call",
-      params: {
-        name: "run_actions",
-        arguments: {
-          pageId: 1,
-          actions: [
-            { tool: "fill", arguments: { uid: "u1", value: "SUPER_SECRET_FAIL" } },
-            { tool: "click", arguments: { uid: "u2" } },
-          ],
-        },
-      },
-    })
-  );
-  await new Promise((r) => setTimeout(r, 30));
-  const errReply = JSON.stringify(replies.find((r) => r.id === 10));
-  assert.ok(!errReply.includes("SUPER_SECRET_FAIL"));
-
-  // Mid-batch navigation (including 1.13 same-URL reload) stops remaining steps cleanly
-  batch.write(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      id: 11,
-      method: "tools/call",
-      params: {
-        name: "run_actions",
-        arguments: {
-          pageId: 1,
-          actions: [
-            { tool: "fill", arguments: { uid: "u1", value: "triggers-reload" } },
-            { tool: "click", arguments: { uid: "u2" } },
-          ],
-        },
-      },
-    })
-  );
-  await new Promise((r) => setTimeout(r, 30));
-  const navReply = replies.find((r) => r.id === 11).result.structuredContent;
-  assert.equal(navReply.status, "stopped");
-  assert.equal(navReply.reason, "navigation");
-  assert.deepEqual(navReply.steps.map((s) => s.status), ["completed", "not_run"]);
 });
