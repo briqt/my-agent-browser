@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.2.0 — 2026-11-22
+
+### Config Comes Only From the User Directory
+
+- **Remove `--dev-config`**: The CLI and daemon no longer read `skills/my-agent-browser/.config.json` from the source tree. Configuration is read only from `~/.config/agent-skills/my-agent-browser/config.json`; to isolate tests or experiments, point `MY_AGENT_BROWSER_HOME` at a temporary directory. Passing `--dev-config` is now an unknown option.
+- **Skill description**: Describes the capability boundary instead of listing individual scenarios.
+- Add the MIT `LICENSE` file.
+
 ## v2.1.0 — 2026-11-22
 
 ### CLI-First Simplification, Full Upstream Tool Access & Workflow Polish

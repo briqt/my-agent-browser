@@ -2,12 +2,11 @@
 name: my-agent-browser
 description: >
   Browser automation and Chrome DevTools CLI for AI agents. Trigger this skill BEFORE starting
-  any browser interaction (navigating pages, logging in, scraping, filling forms, testing UI,
-  inspecting network/console/performance) to learn the CLI workflow and avoid common pitfalls.
-  Also trigger when browser commands misbehave (stale UIDs, heavy-page hangs, tab ownership
-  locks, timeouts) or when `my_agent_browser_mcp_deprecated` appears in MCP tools.
+  any browser interaction — driving, reading or debugging web pages in a real Chrome — to learn
+  the CLI workflow and avoid common pitfalls. Also trigger when browser commands misbehave or
+  when `my_agent_browser_mcp_deprecated` appears in MCP tools.
 metadata:
-  version: "2.1.0"
+  version: "2.2.0"
 ---
 
 # my-agent-browser

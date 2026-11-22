@@ -1,6 +1,5 @@
 node_modules/
 *.user-data/
 state.json
-
-# Explicit --dev-config only; never distribute user configuration.
-skills/my-agent-browser/.config.json
+/AGENTS.md
+/.handoff/

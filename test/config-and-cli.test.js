@@ -70,7 +70,7 @@ test("validateConfig validates slim schema and ignores legacy mcp/lazyStart keys
   assert.equal("lazyStart" in eff.browser, false);
 });
 
-test("initConfig creates config once and preserves user edits; devConfig requires explicit opt-in", () => {
+test("initConfig creates config once and preserves user edits; config is read only from the runtime home", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "mab-cfg-"));
   const repoSkill = fs.mkdtempSync(path.join(os.tmpdir(), "mab-skill-"));
   try {
@@ -86,9 +86,17 @@ test("initConfig creates config once and preserves user edits; devConfig require
     assert.equal(second.created, false);
     assert.equal(JSON.parse(fs.readFileSync(first.path, "utf8")).browser.headless, false);
 
+    // A stray .config.json in the skill directory or cwd is never consulted.
     fs.writeFileSync(path.join(repoSkill, ".config.json"), "{broken json");
-    assert.doesNotThrow(() => loadConfig({ env, devConfig: false, repoSkillDir: repoSkill }));
-    assert.throws(() => loadConfig({ env, devConfig: true, repoSkillDir: repoSkill }), /invalid JSON/);
+    const prevCwd = process.cwd();
+    process.chdir(repoSkill);
+    try {
+      const loaded = loadConfig({ env });
+      assert.deepEqual(loaded.searched, [first.path]);
+      assert.equal(loaded.config.browser.headless, false);
+    } finally {
+      process.chdir(prevCwd);
+    }
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(repoSkill, { recursive: true, force: true });

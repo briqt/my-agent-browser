@@ -194,15 +194,15 @@ function resolveEffectiveConfig(userConfig = {}) {
   };
 }
 
-function getConfigCandidates({ env = process.env, devConfig = false, repoSkillDir } = {}) {
-  const userConfig = path.join(getHomeDir(env), "config.json");
-  if (!devConfig) return [userConfig];
-  const skillDir = repoSkillDir || path.resolve(__dirname, "..", "skills", "my-agent-browser");
-  return [path.join(skillDir, ".config.json"), userConfig];
+// The only config source is the user's runtime directory (MY_AGENT_BROWSER_HOME
+// overrides it for isolated tests). Nothing is read from the source tree,
+// the installed skill directory, or the current working directory.
+function getConfigCandidates({ env = process.env } = {}) {
+  return [path.join(getHomeDir(env), "config.json")];
 }
 
-function loadConfig({ env = process.env, devConfig = false, repoSkillDir } = {}) {
-  const candidates = getConfigCandidates({ env, devConfig, repoSkillDir });
+function loadConfig({ env = process.env } = {}) {
+  const candidates = getConfigCandidates({ env });
   for (const file of candidates) {
     if (fs.existsSync(file)) {
       let parsed;

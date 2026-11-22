@@ -166,7 +166,7 @@ test("notifications suppresses older release notices when current > manifest.lat
 });
 
 test("legacy start-mcp.js stub supports --no-update-check flag and Content-Length MCP framing", async () => {
-  const child = spawn(process.execPath, [STUB_PATH, "--no-update-check", "--dev-config"], {
+  const child = spawn(process.execPath, [STUB_PATH, "--no-update-check"], {
     stdio: ["pipe", "pipe", "pipe"],
   });
   let outBuf = Buffer.alloc(0);

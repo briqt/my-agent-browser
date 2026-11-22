@@ -266,7 +266,6 @@ function parseGlobalAndCommandArgs(rawArgv) {
     raw: false,
     force: false,
     noUpdateCheck: false,
-    devConfig: false,
     owner: undefined,
     pageId: undefined,
     rpcTimeoutMs: undefined,
@@ -286,7 +285,6 @@ function parseGlobalAndCommandArgs(rawArgv) {
     if (token === "--raw") { globals.raw = true; continue; }
     if (token === "--force" || token === "-f") { globals.force = true; continue; }
     if (token === "--no-update-check") { globals.noUpdateCheck = true; continue; }
-    if (token === "--dev-config") { globals.devConfig = true; continue; }
     if (token === "--owner" || token.startsWith("--owner=")) {
       const val = token.includes("=") ? token.slice("--owner=".length) : rawArgv[++i];
       if (val === undefined) throw new Error("--owner requires a value");
@@ -535,7 +533,6 @@ Global Options:
   --raw                             Bare output on open (pageId), eval (value), and shot (file path)
   --rpc-timeout-ms <ms>             Override daemon RPC timeout (default 65000ms)
   --no-update-check                 Disable update checks and cached stderr notices
-  --dev-config                      Allow skill-directory .config.json
 
 Run 'my-agent-browser <command> --help' for details on any command or upstream tool.`);
 }
@@ -715,7 +712,7 @@ async function runDoctor(globals) {
   };
 
   try {
-    const loaded = loadConfig({ env: process.env, devConfig: globals.devConfig });
+    const loaded = loadConfig({ env: process.env });
     report.configPath = loaded.configPath;
     report.configExists = loaded.exists;
     const b = loaded.config.browser || {};
@@ -1184,7 +1181,7 @@ async function bindDynamicTool(toolName, rawArgs, globals) {
   const listResp = await requestDaemon(
     "list_tools",
     { callerOwner: resolveOwner(globals.owner, process.env) },
-    { env: process.env, devConfig: globals.devConfig }
+    { env: process.env }
   );
   if (!listResp?.ok || !Array.isArray(listResp.tools)) {
     throw new Error(listResp?.error || "Could not discover upstream tools");
@@ -1332,7 +1329,7 @@ async function main() {
       return;
     }
     if (sub === "show") {
-      const loaded = loadConfig({ env: process.env, devConfig: globals.devConfig });
+      const loaded = loadConfig({ env: process.env });
       const effective = resolveEffectiveConfig(loaded.config);
       if (globals.json) {
         console.log(JSON.stringify({ ok: true, path: loaded.configPath, exists: loaded.exists, config: effective }));
@@ -1342,7 +1339,7 @@ async function main() {
       return;
     }
     if (sub === "validate") {
-      const loaded = loadConfig({ env: process.env, devConfig: globals.devConfig });
+      const loaded = loadConfig({ env: process.env });
       if (globals.json) console.log(JSON.stringify({ ok: true, exists: loaded.exists, path: loaded.configPath }));
       else console.log(loaded.exists ? `Valid config: ${loaded.configPath}` : `No config file at ${loaded.configPath} (using built-in defaults)`);
       return;
@@ -1350,7 +1347,7 @@ async function main() {
     throw new Error(`Unknown config subcommand '${sub}'. Expected: init | path | show | validate`);
   }
 
-  const loaded = loadConfig({ env: process.env, devConfig: globals.devConfig });
+  const loaded = loadConfig({ env: process.env });
   const callerOwner = resolveOwner(globals.owner, process.env);
 
   if (command === "check-update") {
@@ -1422,7 +1419,6 @@ async function main() {
           : undefined;
     const res = await ensureDaemon({
       env: process.env,
-      devConfig: globals.devConfig,
       idleTimeout: options.idleTimeout,
       headless,
     });
@@ -1480,7 +1476,6 @@ async function main() {
           : undefined;
     await ensureDaemon({
       env: process.env,
-      devConfig: globals.devConfig,
       idleTimeout: options.idleTimeout,
       headless,
     });
@@ -1488,7 +1483,7 @@ async function main() {
     if (globals.json) console.log(JSON.stringify({ ok: true, restarted: true, daemon: status }));
     else console.log(`Restarted browser daemon (PID ${status?.pid}, idleTimeout=${status?.idleTimeout}).`);
   } else if (command === "tools") {
-    const resp = await requestDaemon("list_tools", { callerOwner }, { env: process.env, devConfig: globals.devConfig });
+    const resp = await requestDaemon("list_tools", { callerOwner }, { env: process.env });
     if (!resp.ok) {
       outputError(resp.error || "Failed to list tools", globals.json);
       return;
@@ -1505,7 +1500,7 @@ async function main() {
     const resp = await requestDaemon(
       "claim",
       { pageId, owner: callerOwner, force: globals.force },
-      { env: process.env, devConfig: globals.devConfig }
+      { env: process.env }
     );
     if (!resp.ok) {
       outputError(resp.error || "Failed to claim page", globals.json);
@@ -1519,7 +1514,7 @@ async function main() {
     const resp = await requestDaemon(
       "release",
       { pageId, callerOwner, force: globals.force },
-      { env: process.env, devConfig: globals.devConfig }
+      { env: process.env }
     );
     if (!resp.ok) {
       outputError(resp.error || "Failed to release page", globals.json);
@@ -1542,7 +1537,6 @@ async function main() {
       },
       {
         env: process.env,
-        devConfig: globals.devConfig,
         timeoutMs: computeRpcTimeout(globals, invocation.arguments),
       }
     );
@@ -1561,7 +1555,6 @@ async function main() {
       },
       {
         env: process.env,
-        devConfig: globals.devConfig,
         timeoutMs: computeRpcTimeout(globals, invocation.arguments),
       }
     );

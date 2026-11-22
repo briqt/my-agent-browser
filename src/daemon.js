@@ -132,7 +132,6 @@ async function closeChromeGracefully(pid) {
 }
 
 async function startDaemonServer() {
-  const devConfig = process.argv.includes("--dev-config");
   const idleOverrideIdx = process.argv.indexOf("--idle-timeout");
   const idleOverride = idleOverrideIdx !== -1 ? process.argv[idleOverrideIdx + 1] : undefined;
   const headlessOverride = process.argv.includes("--headed")
@@ -146,7 +145,7 @@ async function startDaemonServer() {
   const socketPath = getSocketPath(process.env);
   const statePath = getDaemonStatePath(process.env);
 
-  const loaded = loadConfig({ env: process.env, devConfig });
+  const loaded = loadConfig({ env: process.env });
   const config = structuredClone(loaded.config);
   if (!config.browser) config.browser = {};
   if (idleOverride !== undefined) config.browser.idleTimeout = idleOverride;

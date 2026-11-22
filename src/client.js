@@ -129,7 +129,6 @@ function tryAcquireStartupLock(lockPath) {
 
 async function ensureDaemon({
   env = process.env,
-  devConfig = false,
   idleTimeout,
   headless,
 } = {}) {
@@ -157,7 +156,6 @@ async function ensureDaemon({
 
     const daemonScript = path.join(__dirname, "daemon.js");
     const args = [];
-    if (devConfig) args.push("--dev-config");
     if (idleTimeout !== undefined) args.push("--idle-timeout", String(idleTimeout));
     if (headless === true) args.push("--headless");
     else if (headless === false) args.push("--headed");
@@ -201,10 +199,9 @@ async function ensureDaemon({
 async function requestDaemon(method, params = {}, options = {}) {
   const {
     env = process.env,
-    devConfig = false,
     timeoutMs = DEFAULT_RPC_TIMEOUT_MS,
   } = options;
-  await ensureDaemon({ env, devConfig });
+  await ensureDaemon({ env });
   return sendRawRequest(method, params, { timeoutMs, env });
 }
 
