@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "latest_version": "2.1.0",
-  "release_url": "https://github.com/briqt/my-agent-browser/releases/tag/v2.1.0",
-  "notice_id": "v2.1.0-cli-streamline",
-  "notice": "v2.1.0 精简配置（移除 mcp.* 与 browser.lazyStart）、新建标签页默认强制后台打开、移除 MCP 残留 batch、开箱默认全开 50 个上游 DevTools 工具，并新增 open --raw / shot --raw / config show 与离线帮助。运行 npm i -g github:briqt/my-agent-browser --install-links 与 npx skills add briqt/my-agent-browser -g -y 升级。"
+  "latest_version": "2.2.0",
+  "release_url": "https://github.com/briqt/my-agent-browser/releases/tag/v2.2.0",
+  "notice_id": "v2.2.0-user-dir-config",
+  "notice": "v2.2.0 配置只从用户目录读取（移除 --dev-config，测试隔离改用 MY_AGENT_BROWSER_HOME），并精简了 skill description。运行 npm i -g github:briqt/my-agent-browser --install-links 与 npx skills add briqt/my-agent-browser -g -y 升级。"
 }
