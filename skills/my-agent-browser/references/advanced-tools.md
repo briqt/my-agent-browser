@@ -1,254 +1,97 @@
-# Advanced Tools
+# Advanced DevTools Workflows
 
-This guide covers the advanced tool groups. **Performance, Network, Lighthouse,
-Console and Emulation are available by default** — no configuration needed. Only
-heap-memory *analysis* is opt-in (`--experimentalMemory` in `mcp.flags`). See
-[setup.md](setup.md) for configuration details.
+`my-agent-browser` exposes the full Chrome DevTools engine (`chrome-devtools-mcp@1.13.0`)
+directly from the CLI — **Performance, Lighthouse, Console, Source-Mapped Logpoints,
+CSS Inspection, Emulation, Screencast, and `take_heapsnapshot` are all enabled by default**.
 
-## Performance Tools
+Run `my-agent-browser tools` to see all enabled tools, or `my-agent-browser <tool> --help`
+for live parameter schemas.
 
-**Availability:** on by default — no flag needed.
+## 1. Source-Mapped Logpoints (`logpoints` / `set_logpoints`)
 
-### Available Tools
+Log expressions to the console whenever a script or original source-mapped line runs —
+without pausing execution, modifying source files, or calling `eval`:
 
-| Tool | Purpose |
-|------|---------|
-| `performance_start_trace` | Begin recording a performance trace |
-| `performance_stop_trace` | Stop recording and return trace results |
-| `performance_analyze_insight { insightName, insightSetId }` | Deep-dive into a specific insight from the trace |
-| `take_heapsnapshot { pageId, filePath }` | Capture a V8 heap snapshot to disk |
+```bash
+# Set logpoints on page 1 (<url-or-suffix>:<line>[:<col>] <console-args-expr>)
+my-agent-browser logpoints 1 "src/cart.ts:42 'total=', cart.total, JSON.stringify(cart.items)"
 
-Heap-snapshot *analysis* tools (dominators, retaining paths, etc.) are opt-in — see
-[Memory Debugging](#memory-debugging-opt-in) below.
+# Trigger the code path, then read output from console
+my-agent-browser click 1 1_15
+my-agent-browser console 1
 
-### Workflow: Profile a Page Load
-
-```
-1. navigate_page { pageId, url: "about:blank" }
-2. performance_start_trace { pageId }
-3. navigate_page { pageId, url: "https://example.com/dashboard" }
-4. wait_for { pageId, text: ["Dashboard loaded"] }
-5. performance_stop_trace { pageId }
-   → Returns: summary with metrics (FCP, LCP, CLS, TBT) and a list of insights
-6. performance_analyze_insight { id: "lcp-element", type: "lcp" }
-   → Returns: details about the LCP element, what delayed it, suggestions
+# Clear all logpoints on page 1
+my-agent-browser logpoints 1 --clear
 ```
 
-### Workflow: Profile an Interaction
+Logpoints survive reloads and navigations until cleared or the tab is closed.
 
-```
-1. navigate_page { pageId, url: "https://app.example.com" }
-2. take_snapshot { pageId } → find the button uid
-3. performance_start_trace { pageId }
-4. click { pageId, uid: "1_42" }
-5. wait_for { pageId, text: ["Results"] }
-6. performance_stop_trace { pageId }
-   → Shows how long the interaction took, JS execution time, layout shifts
-```
+## 2. Console & CSS Inspection
 
-### Memory Snapshots
+```bash
+# List console errors/warnings
+my-agent-browser console 1 --types error --types warn
+my-agent-browser get_console_message 1 3
 
-Use `take_heapsnapshot` to capture heap state for memory leak investigation:
-
-```
-1. navigate_page { pageId, url: "https://app.example.com" }
-2. take_heapsnapshot { pageId, filePath: "/tmp/before.heapsnapshot" }
-3. click { pageId, uid: "1_10" }   — trigger the suspected leak
-4. take_heapsnapshot { pageId, filePath: "/tmp/after.heapsnapshot" }
+# Inspect matched CSS rules for a snapshot element UID
+my-agent-browser get_css_styles 1 1_4
 ```
 
-The `.heapsnapshot` files can be loaded in Chrome DevTools Memory panel for comparison.
+## 3. Performance Tracing & Core Web Vitals
 
-### Memory Debugging (opt-in)
+```bash
+# Auto-reload trace with CWV insights
+my-agent-browser performance_start_trace 1 --reload --auto-stop --file-path /tmp/trace.json.gz
 
-**Requires `--memoryDebugging` (alias `--experimentalMemory`) in `mcp.flags`.** `take_heapsnapshot` is available
-by default, but the heap *analysis* tools below are only exposed when this flag is set.
-
-Analyze heap snapshots programmatically without leaving the agent:
-
-```
-1. take_heapsnapshot { pageId, filePath: "/tmp/snapshot.heapsnapshot" }
-2. get_heapsnapshot_summary { filePath: "/tmp/snapshot.heapsnapshot" }
-   → Returns: object counts and retained sizes grouped by class
-3. get_heapsnapshot_dominators { filePath: "/tmp/snapshot.heapsnapshot" }
-   → Returns: top nodes by retained size (find what's holding the most memory)
-4. get_heapsnapshot_retaining_paths { filePath: "/tmp/snapshot.heapsnapshot", nodeId: "12345" }
-   → Returns: paths from GC roots to this node (why it's not garbage collected)
-5. close_heapsnapshot { filePath: "/tmp/snapshot.heapsnapshot" }
-   → Releases memory used by the loaded snapshot
+# Or profile a manual interaction
+my-agent-browser performance_start_trace 1 --no-reload --no-auto-stop
+my-agent-browser click 1 1_42
+my-agent-browser performance_stop_trace 1
+my-agent-browser performance_analyze_insight 1 NAVIGATION_0 LCPBreakdown
 ```
 
-Full heap tool set (with `--memoryDebugging`): `take_heapsnapshot`,
-`get_heapsnapshot_summary`, `get_heapsnapshot_dominators`, `get_heapsnapshot_edges`,
-`get_heapsnapshot_retainers`, `get_heapsnapshot_retaining_paths`,
-`get_heapsnapshot_class_nodes`, `get_heapsnapshot_details`,
-`get_heapsnapshot_duplicate_strings`, `compare_heapsnapshots`, `close_heapsnapshot`.
+## 4. Lighthouse Audits
 
-## Lighthouse
+```bash
+# Full page-load audit
+my-agent-browser lighthouse_audit 1 --mode navigation --device mobile
 
-**Availability:** on by default — no flag needed.
-
-### Available Tools
-
-| Tool | Purpose |
-|------|---------|
-| `lighthouse_audit { mode, device }` | Run a full Lighthouse audit |
-
-### Parameters
-
-- `mode`: `"navigation"` (full page load audit) or `"snapshot"` (audit current state without reload)
-- `device`: `"desktop"` or `"mobile"`
-
-### Workflow: Full Page Audit
-
-```
-1. navigate_page { pageId, url: "https://example.com" }
-2. lighthouse_audit { pageId, mode: "navigation", device: "mobile" }
-   → Returns: scores for Performance, Accessibility, Best Practices, SEO
-   → Plus specific diagnostics and opportunities
+# Audit current post-login / SPA state without reloading
+my-agent-browser lighthouse_audit 1 --mode snapshot --device desktop --output-dir-path /tmp/lh-out
 ```
 
-### Workflow: Audit Current State (No Reload)
+## 5. Device, Network & Media Emulation
 
-Use snapshot mode when you've navigated to a specific state (e.g., after login,
-after opening a modal) and don't want Lighthouse to reload the page:
+Each `emulate` call replaces previous emulation settings (except `--extra-http-headers`), so combine flags in one call:
 
-```
-1. navigate_page { pageId, url: "https://app.example.com/login" }
-2. take_snapshot { pageId } → fill login form → click submit
-3. wait_for { pageId, text: ["Dashboard"] }
-4. lighthouse_audit { pageId, mode: "snapshot", device: "desktop" }
-   → Audits the post-login dashboard state
+```bash
+my-agent-browser emulate 1 --network-conditions "Slow 3G" --cpu-throttling-rate 4 --color-scheme dark
+# Reset to defaults
+my-agent-browser emulate 1
 ```
 
-### Tips
+## 6. Screencast Recording (Built-In, No ffmpeg Required)
 
-- Navigation mode gives the most complete results (includes load metrics).
-- Snapshot mode is useful for SPAs where the interesting state requires interaction.
-- Mobile device emulation applies throttling automatically — results will differ from desktop.
-- Run audits on a warmed-up page (visit once first) for more consistent results.
-
-## Console
-
-**Availability:** on by default — no flag needed.
-
-### Available Tools
-
-| Tool | Purpose |
-|------|---------|
-| `list_console_messages` | List all console messages (filterable) |
-| `get_console_message { id }` | Get full message details with stack trace |
-
-### Workflow: Find JavaScript Errors
-
-```
-1. navigate_page { pageId, url: "https://example.com" }
-2. take_snapshot { pageId } — interact with the page as needed
-3. list_console_messages { pageId }
-   → Returns: list of messages with id, type (log/warn/error/info), and text preview
-4. get_console_message { id: "msg_3" }
-   → Returns: full message text, stack trace, source location
+```bash
+my-agent-browser screencast_start 1 --file-path /tmp/demo.mp4
+my-agent-browser click 1 1_10
+my-agent-browser screencast_stop 1
 ```
 
-### Filtering
+## 7. Heap Snapshots & Opt-In Memory Debugging
 
-`list_console_messages` returns all message types. Look for:
-- `error` — JavaScript exceptions, failed assertions
-- `warning` — deprecation notices, potential issues
-- `log` / `info` — application debug output
+`take_heapsnapshot` is available by default:
 
-### Tips
-
-- Console messages accumulate from page load. Navigate to a fresh page to reset.
-- Errors from third-party scripts (ads, analytics) are common — check the source URL.
-- Stack traces from `get_console_message` show the exact file and line number.
-
-## Emulation
-
-**Availability:** on by default — no flag needed.
-
-### Available Tools
-
-| Tool | Purpose |
-|------|---------|
-| `emulate { ... }` | Set device emulation conditions |
-
-### Parameters (all optional, combine as needed)
-
-| Parameter | Example | Effect |
-|-----------|---------|--------|
-| `networkConditions` | `"slow-3g"`, `"fast-3g"`, `"offline"` | Throttle network speed |
-| `cpuThrottlingRate` | `4` | Slow CPU by 4x (simulates low-end device) |
-| `geolocation` | `{ latitude: 48.8566, longitude: 2.3522 }` | Spoof GPS location |
-| `colorScheme` | `"dark"` or `"light"` | Force color scheme preference |
-| `viewport` | `{ width: 375, height: 812 }` | Change viewport dimensions |
-| `userAgent` | `"Mozilla/5.0 ... Mobile"` | Override user agent string |
-
-### Workflow: Test on Slow 3G
-
-```
-1. emulate { pageId, networkConditions: "slow-3g", cpuThrottlingRate: 4 }
-2. navigate_page { pageId, url: "https://example.com" }
-3. take_snapshot { pageId } — check if content loads acceptably
-4. emulate { pageId, networkConditions: null, cpuThrottlingRate: 1 }  — reset
+```bash
+my-agent-browser take_heapsnapshot 1 /tmp/before.heapsnapshot
 ```
 
-### Workflow: Test Dark Mode
+To analyze `.heapsnapshot` files directly from the CLI (even without a live browser),
+add `"--memoryDebugging"` to `mcp.flags` in `config.json`, run `my-agent-browser restart`, then use:
+`get_heapsnapshot_summary`, `get_heapsnapshot_dominators`, `get_heapsnapshot_retaining_paths`,
+`compare_heapsnapshots`, `analyze_heapsnapshot_contexts`, `query_heapsnapshot_objects`, and `close_heapsnapshot`.
 
-```
-1. emulate { pageId, colorScheme: "dark" }
-2. navigate_page { pageId, url: "https://example.com" }
-3. take_screenshot — visually verify dark mode rendering
-4. emulate { pageId, colorScheme: "light" }  — reset
-```
+## 8. Virtual WebAuthn Passkeys (Opt-In)
 
-### Workflow: Test Mobile Viewport
-
-```
-1. emulate { pageId, viewport: { width: 375, height: 812 }, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15" }
-2. navigate_page { pageId, url: "https://example.com" }
-3. take_snapshot { pageId } — check responsive layout
-```
-
-### Workflow: Test Geolocation-Dependent Features
-
-```
-1. emulate { pageId, geolocation: { latitude: 35.6762, longitude: 139.6503 } }
-2. navigate_page { pageId, url: "https://maps.example.com" }
-3. take_snapshot { pageId } — verify location-based content shows Tokyo
-```
-
-### Tips
-
-- Emulation settings persist until changed or the page is closed.
-- Set parameters to `null` or omit them to reset to defaults.
-- Combine multiple parameters in one call for realistic device simulation.
-- Network throttling affects all subsequent requests, including XHR/fetch.
-- CPU throttling makes JavaScript execution slower — useful for testing perceived performance.
-
-## Combining Advanced Tools
-
-These categories work together for comprehensive analysis:
-
-### Full Performance Audit Workflow
-
-```
-1. emulate { pageId, networkConditions: "fast-3g", cpuThrottlingRate: 2 }
-2. performance_start_trace { pageId }
-3. navigate_page { pageId, url: "https://example.com" }
-4. wait_for { pageId, text: ["loaded"] }
-5. performance_stop_trace → check metrics under throttled conditions
-6. list_console_messages → check for errors during load
-7. lighthouse_audit { pageId, mode: "navigation", device: "mobile" } → full audit
-8. emulate { pageId, networkConditions: null, cpuThrottlingRate: 1 } → reset
-```
-
-### Debug a Slow Page
-
-```
-1. performance_start_trace { pageId }
-2. navigate_page { pageId, url: "https://slow-page.example.com" }
-3. performance_stop_trace → identify bottlenecks
-4. list_network_requests → find slow/large resources
-5. list_console_messages → check for JS errors causing delays
-```
+Add `"--categoryWebauthn"` to `mcp.flags` and `my-agent-browser restart` to enable
+`configure_webauthn` for testing passkey / security-key registration and sign-in flows.

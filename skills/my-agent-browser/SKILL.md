@@ -1,288 +1,147 @@
 ---
 name: my-agent-browser
 description: >
-  Browser automation guidance and patterns. Trigger this skill BEFORE starting any browser
-  interaction (navigating pages, logging in, scraping, filling forms, testing UI) to learn
-  the correct workflow and avoid common pitfalls. Also trigger when browser MCP tools
-  misbehave: element not found, click does nothing, page crashes, timeout, "target closed",
-  snapshot returns empty, or any unexpected browser behavior. This skill teaches you HOW to
-  use the browser MCP tools effectively — without it you will hit avoidable failures like
-  stale UIDs, heavy-page crashes, and silent navigation failures.
+  Browser automation and Chrome DevTools CLI for AI agents. Trigger this skill BEFORE starting
+  any browser interaction (navigating pages, logging in, scraping, filling forms, testing UI,
+  inspecting network/console/performance) to learn the CLI workflow and avoid common pitfalls.
+  Also trigger when browser commands misbehave (stale UIDs, heavy-page hangs, tab ownership
+  locks, timeouts) or when `my_agent_browser_mcp_deprecated` appears in MCP tools.
+metadata:
+  version: "2.0.0"
 ---
 
 # my-agent-browser
 
-Browser automation for AI agents via `chrome-devtools-mcp` MCP server.
+Stealth, managed Chrome DevTools CLI for AI agents (`my-agent-browser`), powered by bundled `chrome-devtools-mcp@1.13.0` behind a local background daemon — **zero MCP configuration and zero tool-schema context bloat**.
 
-Release **1.5.0**, tested with **chrome-devtools-mcp 1.12.0**. Node 24 LTS is recommended. Check the installed wrapper without launching Chrome:
+## Setup & Health Check
+
+Needs `my-agent-browser` CLI **2.0.0+** (`my-agent-browser --version`, Node 20.19+ / 22.12+ / 24 LTS recommended). Inspect local installation without launching Chrome:
 
 ```bash
-node <skill-dir>/scripts/start-mcp.js --doctor --json
+my-agent-browser doctor --json
 ```
 
-The report identifies the wrapper, Node, Chrome, MCP binary and config paths. If the
-wrapper and installed skill differ, reinstall this skill before troubleshooting the browser.
+If `my-agent-browser` is not installed (or out of date):
 
-## Setup Check
-
-`<skill-dir>` refers to the directory containing this SKILL.md (typically `~/.agents/skills/my-agent-browser/` or `~/.claude/skills/my-agent-browser/` depending on your agent).
-
-If browser MCP tools (`navigate_page`, `take_snapshot`, `click`, `fill`) are not available in your tool list:
-
-1. Install: `npm install -g chrome-devtools-mcp@1.12.0`
-2. Create config:
-   ```bash
-   node <skill-dir>/scripts/start-mcp.js --init-config
-   ```
-3. Register the MCP server in your agent/IDE. The MCP server entry is:
-   - Name: `browser`
-   - Command: `node`
-   - Args: `["<skill-dir>/scripts/start-mcp.js"]` (resolve `<skill-dir>` to the actual absolute path)
-
-   How to register depends on your environment — consult your agent's `/help`, official docs, or settings UI to find where MCP servers are configured.
-4. Restart the agent session
-
-## Updates
-
-The wrapper checks the fixed project update feed asynchronously once per hour at most.
-Version and announcement reminders go to stderr, with a separate 24-hour cooldown.
-It never installs updates. Use `--check-update --json` for an explicit check, or
-`disable_update_check: true` / `--no-update-check` to disable checks and reminders.
-`--help`, `--version`, `--doctor` and `--init-config` do not check the network.
-See [update-checks.md](references/update-checks.md) for cache, publishing and upgrade details.
-
-## Core Workflow
-
-1. `list_pages` or `new_page { url }` — get a numeric **pageId** (required on every page-scoped tool; use `2`, not `"2"`)
-2. `navigate_page { pageId, url }` — go to a page (skip if you just used `new_page`)
-3. `take_snapshot { pageId }` — read the page structure with uid refs
-4. For known stable steps, prefer `fill_form` or `run_actions` (below); otherwise use one native interaction.
-5. Read the result; take a fresh snapshot after navigation, element replacement or any new decision point. A snapshot alone does not invalidate all UIDs.
-
-## Reading Snapshots
-
-`take_snapshot` returns an indented accessibility tree:
-
-```
-uid=1_0 RootWebArea "Sign in" url="https://example.com/login"
-  uid=1_5 heading "Sign in" level="1"
-  uid=1_7 textbox "Email" focusable required
-  uid=1_9 textbox "Password" required
-  uid=1_12 button "Sign in"
-  uid=1_14 link "Forgot password?" url="..."
+```bash
+npm i -g github:briqt/my-agent-browser --install-links   # installs CLI + chrome-devtools-mcp@1.13.0 automatically
+npx skills add briqt/my-agent-browser -g -y              # installs/updates this companion skill
+my-agent-browser config init                             # creates ~/.config/agent-skills/my-agent-browser/config.json if absent
 ```
 
-Each `uid=X_Y` is the identifier you pass to `click`, `fill`, `hover`, etc.
+- **Upgrading from v1.x MCP**: If `my_agent_browser_mcp_deprecated` still appears in your agent's MCP tools, remove that legacy MCP server entry (`start-mcp.js`) using your agent's own MCP configuration management. Browser control now runs exclusively through the `my-agent-browser` CLI.
 
-## Available Tools
+## Core Loop
 
-### Navigation
-- `navigate_page { pageId, url }` — Go to URL
-- `new_page { url, background? }` — Open new tab (returns its pageId); explicit `background` overrides the wrapper default
-- `list_pages` — List all tabs with pageIds
-- `select_page { pageId, bringToFront? }` — Select a tab logically; only `bringToFront: true` actively brings it to front (later calls still need pageId)
-- `close_page { pageId }` — Close tab
+The background daemon and Chrome launch automatically on your first browser command:
 
-### Reading
-- `take_snapshot { pageId }` — Accessibility tree with uid refs
-- `take_screenshot { pageId }` — Capture page image
-
-### Interaction
-- `click { pageId, uid }` — Click element
-- `fill { pageId, uid, value }` — Clear field and type value
-- `fill_form { pageId, elements: [{uid, value}] }` — Fill multiple fields
-- `type_text { pageId, text }` — Type at current focus (no clear, no target)
-- `press_key { pageId, key }` — Press key (Enter, Tab, Escape, ArrowDown, etc.)
-- `hover { pageId, uid }` — Hover over element
-- `drag { pageId, from_uid, to_uid }` — Drag between elements
-- `upload_file { pageId, uid, filePath }` — Upload file to input
-- `handle_dialog { pageId, action }` — Accept/dismiss dialog
-
-### Utility
-- `evaluate_script { pageId, function }` — Execute JavaScript
-- `wait_for { pageId, text[] }` — Wait for text to appear
-- `resize_page { pageId, width, height }` — Change viewport
-
-### Advanced Tools
-
-These tool groups are **available by default** — no flags needed. See [references/advanced-tools.md](references/advanced-tools.md) for detailed workflows.
-
-- **Performance**: `performance_start_trace` / `performance_stop_trace` / `performance_analyze_insight` — traces, Core Web Vitals
-- **Network**: `list_network_requests` / `get_network_request` — inspect requests/responses
-- **Lighthouse**: `lighthouse_audit` — audits (navigation/snapshot, desktop/mobile)
-- **Console**: `list_console_messages` / `get_console_message` — browser console
-- **Emulation**: `emulate` — throttle network/CPU, geolocation, color scheme
-
-`mcp.flags` in config is a passthrough to chrome-devtools-mcp. Use it to **shrink** the tool set (`--no-categoryNetwork` / `--no-categoryPerformance` / `--no-categoryEmulation`) or to **add opt-in** groups (`--memoryDebugging` / `--experimentalMemory` for heap-snapshot analysis, `--categoryExtensions`, `--experimentalVision` for coordinate `click_at`). Authoritative flag list: `npx chrome-devtools-mcp@1.12.0 --help`.
-
-## Key Rules
-
-- **Always pass numeric `pageId`** — For example, `take_snapshot { pageId: 2 }`, never `pageId: "2"`. Chrome DevTools MCP requires it on page-scoped tools (`click`, `fill`, `take_snapshot`, `navigate_page`, `evaluate_script`, `wait_for`, …). Get it from `list_pages` or `new_page`. No preceding `select_page` is needed; logical selection is not OS foreground focus.
-- **UIDs identify observed elements** — Unchanged nodes can keep their UIDs across snapshots. Navigation or replaced elements can invalidate them; UIDs do not re-locate a new element with the same label. Observe again when identity or meaning may have changed.
-- **Use `fill` for inputs** — It targets a specific element and clears first. `type_text` types at whatever is focused, which is fragile.
-- **Batch only known stable segments** — Use `run_actions` when all targets are already observed and no intermediate result needs a decision. Dynamic/uncertain flows remain action → observe → decide. Never replay a stopped batch wholesale.
-- **Heavy pages: use file-based snapshots** — See below.
-
-## Known-step batches (wrapper 1.5.0)
-
-Prefer native `fill_form` for multiple fields. To also include a terminal click/key,
-or combine several known actions, use `run_actions`. For example, after observing
-page 2 and these exact UIDs:
-
-```json
-{
-  "pageId": 2,
-  "actions": [
-    {"tool": "fill", "arguments": {"uid": "1_7", "value": "example"}},
-    {"tool": "click", "arguments": {"uid": "1_12"}}
-  ],
-  "snapshot": "final"
-}
+```bash
+my-agent-browser open "https://example.com/login" --owner my-task   # opens a tab and prints numeric pageId
+my-agent-browser snap 1                                             # accessibility tree with uid=X_Y refs
+my-agent-browser fill-form 1 1_7="user@example.com" 1_9="secret"    # or: batch 1 '[...]' --snapshot final
+my-agent-browser click 1 1_12
+my-agent-browser wait-for 1 "Dashboard"
+my-agent-browser close-page 1 --owner my-task                       # close YOUR tab when finished
 ```
 
-Supports `fill`, `fill_form`, `hover`, plus `click` / `press_key` **only last**.
-Maximum 10 steps on one page; no scripts, navigation chains or nested batches.
-The wrapper validates all parameter shapes before dispatch, but cannot guarantee
-that future elements stay valid. Stops on errors, dialogs, navigation or new pages.
-A successful last click may navigate and return the requested final snapshot.
+1. **Get a numeric `pageId`** from `open <url>` or `pages`. Pass it as the first number on page-scoped commands (`1`, e.g. `snap 1`).
+2. **Observe** with `snap <pageId>` to read `uid=X_Y` element references.
+3. **Act**: use `fill-form` for multiple inputs, `batch` for known stable sequences (fill + submit click), or single commands (`click`, `fill`, `press`, `hover`) when each step depends on new page state.
+4. **Re-observe** after navigation, DOM replacement, or any new decision point. Unchanged nodes keep their UIDs across snapshots; replaced nodes or reloads invalidate them.
 
-Read per-step `completed / failed / interrupted / unknown / not_run` and the
-separate `snapshot.status`. Completed actions stay completed if the snapshot fails.
-Timeout/cancellation means the current action may still run: do not retry it. Other
-tool calls in this session remain blocked until it settles; if stuck, restart the
-MCP session, then inspect the page before deciding what remains. No rollback or replay.
+## Shared Browser, `owner` Locks & Lifecycle
 
-Snapshots default to `none`; request `final` only when useful. For heavy pages add
-`snapshotFilePath` and read just the needed file section. Step reports omit input
-values, but a requested snapshot can contain page/form data. Other Agents sharing
-Chrome can still interfere; use separate tabs and do not assume cross-session isolation.
+All agents under the same OS user share one daemon and one Chrome profile (`~/.config/agent-skills/my-agent-browser/user-data`).
 
-Requires the updated wrapper, tested MCP **1.12.0** and normal numeric pageId tools.
-`mcp.batchActions` defaults to `true`; set `false` and restart to opt out. The wrapper
-enables upstream structured results for interruption detection. If `run_actions` is
-missing, check `--doctor --json`, update the Skill/MCP separately and restart the
-session; `--slim` / disabled pageId routing do not support this tool.
-See [batch-actions.md](references/batch-actions.md) for the full contract and recovery.
+- **Check who else is using the browser**:
+  - `my-agent-browser pages` — lists every open tab with `owner=<name>` and `idle=<duration>`.
+  - `my-agent-browser status` — shows daemon/browser state, `idleTimeout`, `activeOwners`, and **`Safe to stop now: yes/no`** (`canStopSafely` in `--json`).
+- **Isolate your tabs**: Pass `--owner <unique-name>` (or export `MY_AGENT_BROWSER_OWNER=<unique-name>`) when opening a tab (`open <url> --owner agent-a`) or claiming one (`claim <pageId> --owner agent-a`). Mutating calls on an owned tab require matching `--owner` (anyone else is rejected unless `--force` is explicitly authorized). Read-only commands (`pages`, `status`, `snap`, `shot`, `console`, `network`) never block on ownership.
+- **Close your tab, not the whole browser**: Run `close-page <pageId>` when your task ends. Do **not** run `stop` unless the user asks or `status` confirms no other agent is using the browser (`stop` refuses automatically if another owner holds open tabs unless `--force` is passed).
+- **Automatic idle shutdown**: By default, the daemon closes Chrome and exits after **`30m`** of inactivity (`browser.idleTimeout` in `config.json`). Set `"idleTimeout": "never"` (or `0`) to keep Chrome open indefinitely, or pass `start --idle-timeout 1h` / `never`. External browsers (`browser.browserUrl`) are never closed by `stop` or idle timeout.
+- **Apply config edits without restarting your agent**: Edit `~/.config/agent-skills/my-agent-browser/config.json`, then run `my-agent-browser restart`.
 
-## Heavy Pages (Critical)
+## Command Reference
 
-Pages with many DOM nodes (rich-text editors, large tables, chat histories, admin dashboards) will crash or hang if you use `includeSnapshot: true` or `wait_for` on them.
+### Core Commands
+- `open <url> [--owner <name>] [--background | --foreground]` — Open tab (returns `pageId`)
+- `pages [--owner <name>] [--json]` — List open tabs, owners, and idle times
+- `goto <pageId> <url>` / `reload <pageId>` / `back <pageId>` / `forward <pageId>` — Navigate
+- `select-page <pageId> [--bring-to-front]` — Logical tab selection (`--bring-to-front` for GUI focus)
+- `close-page <pageId>` — Close tab (last remaining tab in Chrome cannot be closed)
+- `snap <pageId> [filePath] [--verbose]` — Accessibility tree snapshot (`-o /tmp/snap.txt` for heavy pages)
+- `shot <pageId> [filePath] [--full-page] [--uid <uid>]` — Screenshot (always saved to file, never raw base64)
+- `click <pageId> <uid> [--dbl-click]` — Click element
+- `fill <pageId> <uid> <value>` — Clear input/textarea/select and enter value
+- `fill-form <pageId> <uid=value...>` — Fill multiple fields at once
+- `hover <pageId> <uid>` / `drag <pageId> <fromUid> <toUid>` — Pointer actions
+- `press <pageId> <key>` — Key or shortcut (`Enter`, `Escape`, `Control+A`)
+- `type <pageId> <text> [--submit-key Enter]` — Type at current focus without clearing
+- `upload <pageId> <uid> <filePath...>` — Upload local file(s)
+- `dialog <pageId> <accept|dismiss> [--prompt-text <text>]` — Handle JS alert/confirm/prompt
+- `wait-for <pageId> <text...> [--timeout <ms>] [--visible]` — Wait for text substring (case & whitespace sensitive!)
+- `eval <pageId> <fn> [--raw]` — Run JS function in page (`--raw` prints bare return value for pipes like `| jq`)
+- `batch <pageId> '<actions-json>' [--snapshot final] [--snapshot-file <path>]` — Bounded multi-step batch
 
-**Symptoms**: browser unresponsive, "target closed", repeated timeouts after injecting content.
+### Full DevTools Native Ceiling (All 33+ Upstream Tools)
+Every `chrome-devtools-mcp` tool is directly callable by name (`snake_case` or `kebab-case`). Run `my-agent-browser tools` to list all enabled tools, or `my-agent-browser <tool> --help` to inspect exact live parameters:
+- **Console & Source Logpoints**: `console <pageId> [--types error]`, `get_console_message <pageId> <msgid>`, `logpoints <pageId> "src/app.ts:42 x" [--clear]`
+- **Network & Mocks**: `network <pageId> [--resource-types fetch]`, `get_network_request <pageId> --reqid <n>` (enable `--categoryNetworkMocks` in `mcp.flags` for `mock_network` / `remove_network_mock`)
+- **Performance & Lighthouse**: `performance_start_trace <pageId>`, `performance_stop_trace <pageId>`, `performance_analyze_insight <pageId> <setId> <name>`, `lighthouse_audit <pageId> --mode snapshot`
+- **Memory, CSS & Emulation**: `take_heapsnapshot <pageId> <file>`, `get_css_styles <pageId> <uid>`, `emulate <pageId> --color-scheme dark`, `resize_page <pageId> <w> <h>`
+- **Raw JSON Invocation**: `my-agent-browser call <tool> --args-json '{"pageId":1,...}'`
 
-**Solution**:
-1. Use `includeSnapshot: false` (or omit) for `click`, `fill`, `hover` on heavy pages
-2. Save snapshot to file: `take_snapshot { pageId, filePath: "/tmp/snap.txt" }`
-3. Read only what you need: `tail -100 /tmp/snap.txt` (dialogs/modals are at the end)
-4. Close unrelated tabs — each holds its DOM in memory
+## Critical Rules & Patterns
 
-**When to expect this**: WYSIWYG editors after injecting content, pages with 200+ repeating elements, infinite scroll pages after several scrolls. Switch to file-based workflow proactively before the crash, not after.
+### 1. Bounded Batches (`batch`) vs Shell Chaining
+- For multiple form fields alone, use `fill-form`.
+- For an observed, stable form + terminal submit click/key, use `batch`:
+  ```bash
+  my-agent-browser batch 1 '[{"tool":"fill","arguments":{"uid":"1_7","value":"alice"}},{"tool":"click","arguments":{"uid":"1_12"}}]' --snapshot final
+  ```
+  Supports 1–10 steps (`fill`, `fill_form`, `hover`, plus `click` / `press_key` **only last**). Stops immediately on error, dialog, navigation (including same-URL reloads), or new page, omitting input values from step summaries. If a step reports `unknown` (timeout/cancel), **do not resend it blindly** — inspect with `snap` first. See [references/batch-actions.md](references/batch-actions.md).
 
-## Scraping Patterns
+### 2. Heavy Pages (Prevent Context & Memory Overflow)
+Rich-text editors, large tables, chat histories, and infinite-scroll feeds produce huge accessibility trees.
+- Save snapshots to disk and inspect selectively:
+  ```bash
+  my-agent-browser snap 1 /tmp/snap.txt
+  tail -n 100 /tmp/snap.txt          # modals/dialogs are usually at the end
+  grep -n -C 3 "Submit" /tmp/snap.txt
+  ```
+- Keep `--include-snapshot` off on `click` / `fill` / `hover`, and close finished tabs (`close-page`).
 
-### Simple: snapshot is enough
-Navigate → `wait_for { pageId, text }` → `take_snapshot { pageId }` → read text/links from the accessibility tree directly. No JS needed for most structured pages.
-
-### Paginated: prefer URL-based
-Loop `navigate_page { pageId, url: "...?page=N" }` instead of clicking Next buttons. More reliable, avoids stale UIDs, easy to resume if interrupted.
-
-### Dynamic/lazy-loaded content
-`press_key { pageId, key: "End" }` to trigger lazy load → `wait_for { pageId, text }` known content → `take_snapshot { pageId }`.
-
-### Complex extraction: `evaluate_script`
-When the a11y tree doesn't capture table row/column relationships or deeply nested data, extract with JS:
-```
-evaluate_script { pageId, function: "() => JSON.stringify([...document.querySelectorAll('tr')].map(r => [...r.cells].map(c => c.textContent.trim())))" }
-```
-
-### Login-gated content
-Option A: persistent profile — log in once with `headless: false`, then reuse `userDataDir`.
-Option B: automated — fill credentials via `fill` + `click` + `wait_for`.
-Option C: connect to existing session — set `browserUrl` in config.
-
-## Multi-Tab Patterns
-
-- `new_page { url }` opens a tab and returns its pageId — use that pageId on subsequent calls, don't guess
-- Pass the target tab's pageId on every call; no `select_page` is needed. Only `select_page { pageId, bringToFront: true }` actively brings a tab to front; logical selection is not OS foreground focus.
-- "Open in new tab, extract, close, return" pattern avoids losing your place on listing pages
-- Each tab is independent — snapshots, UIDs, and page state don't cross tabs
-
-### Background new pages
-
-`config.mcp.backgroundNewPages` defaults to `false`; omitted/`false` preserves
-upstream `new_page` behavior entirely. To opt in, merge
-`{ "mcp": { "backgroundNewPages": true } }` into config and restart the MCP session.
-Only strict boolean `true` adds `background: true` when a `new_page` call omits
-`background`; explicit `background: true` or `false` is always respected.
-This is wrapper config, not an upstream CLI flag—do not put it in `mcp.flags`.
-Lazy, eager and direct (`browserUrl`) modes share it, independently of stealth.
-It does not guarantee focus behavior for Chrome's first GUI launch, website
-`window.open` popups, or `select_page` with `bringToFront: true`.
-See [setup](references/setup.md) and [multi-tab workflow](references/multi-tab-workflow.md).
-
-## JavaScript Execution Tips
-
-- `evaluate_script` runs in the browser page context (has `document`, `window`, page libraries)
-- Return values must be JSON-serializable — use `JSON.stringify()` for objects/arrays
-- Can return Promises (useful for polling/waiting patterns)
-- DOM changes persist — after modifying the page, retake snapshot for fresh UIDs
-- Common uses: scroll, extract structured data, remove overlays, trigger lazy load, read computed styles
-
-## Error Recovery
-
-- Element not found after click → page changed, `take_snapshot { pageId }` again, find new UID
-- `wait_for` timeout → page didn't load expected content, `take_snapshot { pageId }` to see actual state
-- MCP stale state → the wrapper replaces and initializes its MCP child. In-flight calls fail explicitly and are never replayed. After recovery, `list_pages` and take a fresh snapshot; verify the result before retrying an action that changes state.
-- Chrome crashed / "target closed" → in managed lazy mode Chrome is relaunched; `list_pages` then navigate again with the new pageId
-- Anti-bot detection → check the WebGL renderer and your exit IP first, not Chrome flags. See [references/anti-detection.md](references/anti-detection.md)
-
-## Example: Login Flow
-
-```
-1. list_pages → pageId (or new_page { url: "https://app.example.com/login" })
-2. navigate_page { pageId, url: "https://app.example.com/login" }  — skip if new_page already loaded it
-3. take_snapshot { pageId }
-   → uid=1_7 textbox "Email", uid=1_9 textbox "Password", uid=1_12 button "Sign in"
-4. fill_form { pageId, elements: [{uid: "1_7", value: "user@example.com"}, {uid: "1_9", value: "secret123"}] }
-5. take_snapshot { pageId } → find the current Sign in button, e.g. uid=2_12
-6. click { pageId, uid: "2_12" }
-7. wait_for { pageId, text: ["Dashboard"] }
-8. take_snapshot { pageId } → now on dashboard, new uids
+### 3. JavaScript Extraction (`eval --raw`)
+`eval` automatically wraps inline functions to hide `pptr:` frames and your OS username path from page-side stack traps. Always pass a **JavaScript function expression** (`"() => ..."`), never a bare expression or TypeScript:
+```bash
+my-agent-browser eval 1 "() => document.title" --raw
+my-agent-browser eval 1 "() => [...document.querySelectorAll('tr')].map(r => [...r.cells].map(c => c.textContent.trim()))" --raw | jq .
 ```
 
-## Troubleshooting Quick Reference
+### 4. Troubleshooting Quick Reference
 
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| Click/fill does nothing | Stale UIDs | `take_snapshot { pageId }` again, use fresh UIDs |
-| `expected number, received string` | `pageId` was quoted | Pass a number, e.g. `pageId: 2`, not `"2"` |
-| `Required at pageId` | pageId omitted | `list_pages` / `new_page`, then pass that pageId on every page-scoped call |
-| Element not in snapshot | Below fold / iframe / async | Scroll first, or `wait_for { pageId }`, or `evaluate_script { pageId }` to check |
-| `wait_for` timeout | Text never appeared | `take_snapshot { pageId }` to see actual state |
-| Chrome not starting | Not installed or port in use | Check `which google-chrome`, check port conflict |
-| Snapshot empty/minimal | JS-rendered content not ready | `wait_for` before snapshot |
-| Memory overflow / crash | Heavy DOM | File-based snapshots (see above) |
-| Bot detection | Usually WebGL renderer or exit IP, rarely flags | See [references/anti-detection.md](references/anti-detection.md) |
+| Symptom | Cause | Fix |
+|---|---|---|
+| `command not found: my-agent-browser` | CLI not installed or global npm bin not on PATH | `npm i -g github:briqt/my-agent-browser --install-links` |
+| `Page N is owned by '...'` | Tab locked by another agent | Open your own tab (`open <url> --owner <you>`), pass your `--owner`, or `--force` only when authorized |
+| `Refusing to stop browser: owner '...'` | Another agent holds open tab(s) | Close only your tab (`close-page <id>`); check `status` |
+| Click/fill fails or does nothing | Stale UID after DOM change | `snap <pageId>` again and use the fresh UID |
+| `wait-for` times out on visible text | Snapshot normalizes whitespace; DOM text keeps newlines/spaces | Pass a shorter distinctive substring to `wait-for` |
+| Native `<select>` on macOS ignores `press` | OS-rendered popup menu | Use `fill <pageId> <uid> "<option>"` or `eval` setting `.value` + `change` event |
+| Anti-bot challenge / block | Usually exit IP or WebGL renderer, not Chrome flags | Check `browser.proxy` and WebGL renderer — see [references/anti-detection.md](references/anti-detection.md) |
 
-For detailed troubleshooting: [references/troubleshooting.md](references/troubleshooting.md)
-For network debugging workflows: [references/network-debugging.md](references/network-debugging.md)
-For advanced scraping patterns: [references/scraping-patterns.md](references/scraping-patterns.md)
+## References
 
-## Domain-Specific Workflows
-
-- **Academic paper download** (CNKI, Google Scholar, MDPI): [references/domain/academic-paper-download.md](references/domain/academic-paper-download.md)
-
-### Navigation and script recovery
-
-- Refresh or navigate with `navigate_page { pageId, type: "reload" }` / `{ pageId, url }`.
-  A script that calls `location.reload()` and then awaits work can lose its execution
-  context; perform the navigation and subsequent inspection as separate calls.
-- `evaluate_script.function` is a JavaScript **function**, e.g. `"() => document.title"`.
-  Do not pass a bare expression or TypeScript syntax such as `(window as any)`.
-- `No page found` means rediscover IDs with `list_pages`; do not repeatedly retry the old ID.
-- For HTTP extraction, read `status` and the response text before parsing JSON. Empty
-  responses and HTML error pages need separate handling; a JSON parse error alone
-  does not establish that a requested change failed.
-
-When upgrading browser dependencies, read [dependency-upgrades.md](references/dependency-upgrades.md)
-for the tested version, runtime requirements and changed file/tool behavior.
+- Installation, `config.json`, `idleTimeout`, `backgroundNewPages` & `mcp.flags`: [references/setup.md](references/setup.md)
+- Anti-detection measurements & WebGL / stack-hiding details: [references/anti-detection.md](references/anti-detection.md)
+- Multi-tab & multi-agent `--owner` workflows: [references/multi-tab-workflow.md](references/multi-tab-workflow.md)
+- Bounded batch contract & recovery: [references/batch-actions.md](references/batch-actions.md)
+- JavaScript execution (`eval`): [references/javascript-execution.md](references/javascript-execution.md)
+- Scraping & login patterns: [references/scraping-patterns.md](references/scraping-patterns.md)
+- Network debugging & `mock_network`: [references/network-debugging.md](references/network-debugging.md)
+- Performance, Lighthouse, Logpoints, Memory & Emulation: [references/advanced-tools.md](references/advanced-tools.md)
+- Troubleshooting: [references/troubleshooting.md](references/troubleshooting.md)
+- Updates, notices & daemon version sync: [references/update-checks.md](references/update-checks.md)
+- Upstream `1.13.0` compatibility notes: [references/dependency-upgrades.md](references/dependency-upgrades.md)
+- Academic paper download (CNKI, Google Scholar, MDPI): [references/domain/academic-paper-download.md](references/domain/academic-paper-download.md)

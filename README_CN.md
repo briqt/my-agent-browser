@@ -2,193 +2,104 @@
 
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)]()
 
-[chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) 的生产级包装。chrome-devtools-mcp 提供了浏览器 MCP 工具，但 Chrome 进程管理、多 session 共享、故障恢复全部留给用户自己处理。本项目补上这些运维层，让 AI Agent 真正可靠地使用浏览器。
+面向 AI Agent 的隐身、受管 Chrome DevTools **独立 CLI + Skill**（内置绑定实测 [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) **1.13.0**）。
 
 **[English](README.md)**
 
-## 相对于直接用 chrome-devtools-mcp，本项目多了什么
+## 为什么 v2.0 去掉 MCP 全面转向 CLI
 
-### Chrome 生命周期管理
+- **零上下文污染**：MCP 模式下 33+ 个浏览器工具的 JSON Schema 在每轮对话起步就白占 1.5万～3万+ tokens。CLI + Skill 模式平时仅约 100 tokens，真正用浏览器时才按需加载指导。
+- **零客户端配置**：不再需要给 Claude Code、Codex、Cursor、Antigravity 等逐个配 JSON/TOML；修改 `config.json` 后执行 `my-agent-browser restart` 即可热生效，无需重启当前 Agent 对话。
+- **与会话进程解耦 + Unix 组合能力**：支持 `eval --raw | jq`、重页面快照落盘配合 `grep`/`tail` 局部读取，多个并发 Agent 可安全共享同一个已登录的 Chrome 实例。
 
-- 自动查找 Chrome（macOS/Linux/Windows 各搜索 10+ 路径，含 Edge/Brave/Arc/Chromium）
-- Lazy start — Chrome 在第一次 `tools/call` 时才启动，不在 Agent 启动时浪费资源
-- 多 Agent session 共享同一 Chrome 实例，通过 `browser.lock` 引用计数
-- 最后一个 session 退出时自动关闭 Chrome
-- Agent 崩溃后不留孤儿：父进程心跳检测 + 启动时清理残留进程
-- WSL/无头 Linux 自动检测并配置 DISPLAY（WSLg、Wayland、X11）
+## 相比直接裸用官方 CLI 多了什么
 
-### 故障自愈
+### 1. 实测级反爬隐身 + 免下载系统浏览器自适应
+- 自动发现本机已安装的 Chrome / Edge / Brave / Chromium / Arc，**脱离 Puppeteer 直接干净启动**（天然不带 `--enable-automation`，`navigator.webdriver === false`，无需额外下载几百 MB 的 Chrome for Testing）。
+- 自动改写内联 `eval`（`evaluate_script`）调用栈，抹除 `pptr:` 标记与通常包含系统用户名的安装路径——经站点侧 getter 陷阱实测验证，详见 [anti-detection.md](skills/my-agent-browser/references/anti-detection.md)。
+- 默认启动参数全部经单因素指纹实测（保留真 GPU WebGL 与原生滚动条宽度，剔除弄巧成拙的伪反爬参数）。
 
-- Chrome 崩溃检测通过 CDP 端口探测——不盲信错误文本
-- 确认崩溃后自动重启 Chrome，重写 MCP 响应告知 Agent 重新导航
-- MCP 进程状态过期（如引用了已关闭的 tab）时，只重启 MCP 子进程，Chrome 保持
-- Profile 锁残留（强杀后 SingletonLock）自动清理，不阻塞下次启动
+### 2. 多 Agent `owner` 协同保护 + 可配置空闲自动关闭
+- **标签页 `owner` 归属锁**（`--owner <name>` 或环境变量 `MY_AGENT_BROWSER_OWNER`）：支持按归属锁定标签页；任何 Agent 都可通过 `pages` 和 `status`（`canStopSafely`）主动查看还有谁在用浏览器、能不能安全关闭；未加 `--force` 时自动拦截跨 Agent 误改他人标签页或强关共享浏览器。
+- **空闲自动回收**（`browser.idleTimeout`）：默认 `"30m"` 无操作自动关闭受管 Chrome 与后台守护进程；也支持设为 `"never"`（或 `0`）**永不自动关闭**。直连外部浏览器（`browserUrl`）模式下绝不关闭用户的外部浏览器。
+- **故障自愈**：通过 CDP `/json/version` 端口探测确认崩溃后自动拉起 Chrome、清理残留 `SingletonLock`、子进程状态过期热替换且**绝不静默重放副作用动作**。
 
-### 配置驱动 + 反爬支持
+### 3. 顺手的高频短命令 + 100% 保留原生 DevTools 上限
+- 高频操作极简统一：`open`、`pages`、`goto`、`snap`、`shot`、`click`、`fill`、`fill-form`、`wait-for`、`eval --raw`、`batch`。
+- 补齐上游官方 CLI 缺失与痛点：补回官方 CLI 漏掉的 `fill-form` 与 `wait-for`、统一 `eval <pageId> <fn>` 参数顺序、支持 `logpoints <pageId> --clear` 清空断点日志、`shot` 自动存盘绝不向终端倾倒数 MB base64。
+- **原生上限零折损**：全部 33+ 个 `chrome-devtools-mcp` 原生工具（`lighthouse_audit`、`set_logpoints`、`performance_start_trace`、`take_heapsnapshot`、`mock_network`、`configure_webauthn`、`emulate` 等）均可直接 `my-agent-browser <tool>` 调用，随时 `my-agent-browser <tool> --help` 查看实时 Schema。
 
-- headless 模式、proxy 代理、viewport 尺寸、自定义启动参数——所有 Chrome 启动参数均可配置
-- `evaluate_script` 的调用栈自动去除 `pptr:` 标记和 MCP 安装路径（该路径通常含系统用户名）——用站点自有脚本设陷阱实测验证，见 [anti-detection.md](skills/my-agent-browser/references/anti-detection.md)
-- 启动参数推荐基于单因素实测，而非以讹传讹
-- 直连已有 Chrome 实例（`browserUrl` 模式，适合已登录的长期会话）
-- 可选后台新建 tab：`mcp.backgroundNewPages` 默认 `false`，尊重每次调用的显式参数
+## 安装（两条命令，自动包含上游依赖）
 
-### Agent 使用指导（SKILL.md）
-
-- 重页面：文件快照避免 DOM 溢出崩溃
-- 错误恢复：UID 过期、超时、Chrome 重启后的正确应对
-- 多 tab 管理：打开/提取/关闭模式，tab 间 UID 隔离
-- 抓取模式：URL 分页、懒加载触发、JS 提取
-- 登录流程：持久 profile、自动填充、连接已有会话
-
-## 安装
+无需再单独安装 `chrome-devtools-mcp`，CLI 包已自动锁定并内聚管理 `1.13.0`：
 
 ```bash
+npm i -g github:briqt/my-agent-browser --install-links
 npx skills add briqt/my-agent-browser -g -y
-npm install -g chrome-devtools-mcp@1.12.0
-node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js --init-config
 ```
 
-然后在你的 Agent 中注册 MCP 服务器：
-
-### Claude Code
+首次使用可初始化配置文件并做离线体检：
 
 ```bash
-claude mcp add browser -s user -- node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js
+my-agent-browser config init
+my-agent-browser doctor --json
 ```
 
-或在项目 `.mcp.json` 中添加：
+### 从 v1.x（MCP 版）升级说明
+
+1. 执行上方两条安装/更新命令。
+2. 用你所在 Agent 自身的 MCP 配置管理方式，移除旧的 `browser` MCP 服务项（指向 `start-mcp.js` 的配置）。
+   - *防崩兜底：在移除前，`skills/my-agent-browser/scripts/start-mcp.js` 已替换为极轻量的兼容提示桩（仅暴露单个 `my_agent_browser_mcp_deprecated` 提示工具），不会让已配 MCP 的 Agent 报错崩溃，并会引导卸载旧 MCP。*
+3. 原有的 `~/.config/agent-skills/my-agent-browser/config.json` 与 `user-data/` 登录态完全兼容保留；若以前为 v1 全局装过 `chrome-devtools-mcp`，可按需执行 `npm uninstall -g chrome-devtools-mcp`。
+
+## 快速上手
+
+```bash
+my-agent-browser open "https://example.com" --owner agent-1
+my-agent-browser pages
+my-agent-browser snap 1
+my-agent-browser eval 1 "() => document.title" --raw
+my-agent-browser shot 1 /tmp/example.png
+my-agent-browser status
+my-agent-browser close-page 1 --owner agent-1
+```
+
+## 核心配置项
+
+编辑 `~/.config/agent-skills/my-agent-browser/config.json`（改完执行 `my-agent-browser restart` 即刻生效）：
 
 ```json
 {
-  "mcpServers": {
-    "browser": {
-      "command": "node",
-      "args": ["~/.agents/skills/my-agent-browser/scripts/start-mcp.js"]
-    }
+  "browser": {
+    "headless": true,
+    "idleTimeout": "30m",
+    "proxy": "",
+    "viewport": "1280x720"
+  },
+  "mcp": {
+    "backgroundNewPages": false,
+    "batchActions": true,
+    "flags": []
+  },
+  "stealth": {
+    "evaluateScript": true,
+    "sourceUrl": "eval.js"
   }
 }
 ```
 
-### Codex
+- **空闲关闭控制**：`browser.idleTimeout` 默认 `"30m"`（支持 `ms`/`s`/`m`/`h` 单位）；设为 `"never"` 或 `0` 则**永不自动关闭**。也可启动时传 `my-agent-browser start --idle-timeout never`。
+- **后台新建标签页**：`mcp.backgroundNewPages` 设为 `true` 时，未显式指定前后台的 `open` 默认后台打开（`--foreground` / `--background` 显式参数始终优先）。
+- **开启高阶工具组**：在 `mcp.flags` 中加入 `"--categoryNetworkMocks"`（页级网络 Mock）或 `"--memoryDebugging"`（13 个堆快照深度分析工具）。
 
-```bash
-codex mcp add browser -- node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js
-```
-
-或在 `~/.codex/config.toml` 中添加：
-
-```toml
-[mcp_servers.browser]
-command = "node"
-args = ["~/.agents/skills/my-agent-browser/scripts/start-mcp.js"]
-enabled = true
-```
-
-### 其他 MCP Agent（Cursor、Kiro 等）
-
-按你的 Agent 文档添加 MCP 服务器配置：
-- Command: `node`
-- Args: `["~/.agents/skills/my-agent-browser/scripts/start-mcp.js"]`
-
-## 工作原理
-
-```
-Agent (Claude Code / Codex / Cursor / Kiro / etc.)
-  ↓ MCP tool calls（原生工具调用）
-start-mcp.js
-  ↓ 读取配置，通过 browser.lock 管理 Chrome 生命周期
-  ↓ 启动 Chrome（detached）并设置 --remote-debugging-port
-  ↓ 启动 chrome-devtools-mcp 并通过 --browserUrl 连接
-chrome-devtools-mcp
-  ↓ 通过 CDP 协议控制 Chrome
-Chrome（多 session 共享实例）
-```
-
-- Chrome 作为独立进程运行，多个 MCP session 共享同一实例
-- `browser.lock` 跟踪活跃客户端数量；最后一个退出时自动关闭 Chrome
-- 所有浏览器配置在 `~/.config/agent-skills/my-agent-browser/config.json`
-- 配置修改后须重启 MCP session
-
-## 后台新建 tab（v1.3.0）
-
-MCP 依赖仍为 **chrome-devtools-mcp 1.12.0**。
-`~/.config/agent-skills/my-agent-browser/config.json` 中的默认配置：
-
-```json
-{ "mcp": { "backgroundNewPages": false } }
-```
-
-需要启用时改为：
-
-```json
-{ "mcp": { "backgroundNewPages": true } }
-```
-
-将该字段合并到已有配置，随后重启 MCP session。
-`mcp.backgroundNewPages` 是 wrapper 的布尔配置，不是上游 CLI flag，不要放入
-`mcp.flags`。缺省或 `false` 完全保留上游 `new_page` 行为；仅严格为布尔 `true`
-且调用未提供 `background` 时，才补入 `background: true`。调用显式传入的
-`background: true` 或 `false` 始终优先。lazy、eager 和 direct（`browserUrl`）
-模式共用此行为，不受 stealth 开关影响。
-
-这不是全局焦点保证：不保证 Chrome 首次 GUI 启动、网站 `window.open` 弹窗或
-`select_page { pageId, bringToFront: true }` 的焦点行为。`select_page` 只有在
-`bringToFront: true` 时才主动置前；逻辑选中不等于 OS 前台。页面工具直接传入
-`pageId` 即可，无需先 `select_page`。详见[配置说明](skills/my-agent-browser/references/setup.md)
-和[多 tab 工作流](skills/my-agent-browser/references/multi-tab-workflow.md)。
-
-## SKILL.md 教 Agent 什么
-
-内置的 SKILL.md 提供工作流指导，帮助 Agent 避免常见问题：
-
-- **重页面** — 文件快照防止 DOM 溢出崩溃
-- **抓取模式** — URL 分页、懒加载触发、JS 提取
-- **多 tab** — 打开/提取/关闭模式，tab 间 UID 隔离
-- **错误恢复** — UID 过期、超时、Chrome 重启
-- **登录流程** — 持久 profile、自动填充凭证、连接已有会话
-
-## 一次调用执行多个动作（v1.5.0）
-
-新增 `run_actions`：对已观察、目标稳定的同一页面顺序执行最多 10 步。
-支持 `fill`、`fill_form`、`hover`，以及放在最后的 `click` / `press_key`；
-可在最后返回快照，重页面可保存到文件。单纯填写多个字段仍优先使用 `fill_form`。
-
-先校验整批参数，再执行；遇到错误、弹窗、导航或新页面就停止后续输入，返回每步状态。
-超时/取消不代表当前动作已经停止，因此不会自动重试，也不会让同一会话的下一次工具
-调用与尚未结束的动作交错。其他 Agent 共用 Chrome 时仍需各自使用独立标签页。
-
-`mcp.batchActions` 默认开启，依赖实测的 MCP **1.12.0**，并自动启用上游结构化结果。
-设置为 `false` 可关闭；升级 Skill 后需要重启 MCP 会话。详见[批处理接口与恢复](skills/my-agent-browser/references/batch-actions.md)。
-
-## 版本检查与通知（v1.4.0）
-
-启动 MCP 时异步检查项目更新，不等待检查完成；联网失败不影响浏览器工作。
-检查间隔 1 小时，失败后 5 分钟重试；相同版本和公告分别每 24 小时最多提醒一次。
-提示只写 stderr，不自动升级。配置 `disable_update_check: true` 或启动参数
-`--no-update-check` 可关闭联网和缓存提醒。
-
-```bash
-node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js --check-update --json
-```
-
-`--version`、`--doctor`、`--help` 和 `--init-config` 不联网。Skill 与 MCP 依赖需分别
-更新，随后重启 MCP 会话。详见[更新机制](skills/my-agent-browser/references/update-checks.md)。
+详见 [配置说明](skills/my-agent-browser/references/setup.md)、[多标签与多 Agent 协同](skills/my-agent-browser/references/multi-tab-workflow.md)、[有界批处理](skills/my-agent-browser/references/batch-actions.md) 与 [更新机制](skills/my-agent-browser/references/update-checks.md)。
 
 ## 更新
 
 ```bash
-npx skills update my-agent-browser -g -y
-npm install -g chrome-devtools-mcp@1.12.0
+npm i -g github:briqt/my-agent-browser --install-links
+npx skills add briqt/my-agent-browser -g -y
 ```
-
-从 v1.0.x 升级时，把配置迁移到 v1.1 的参数推荐（先看 diff，再 `--apply`）：
-
-```bash
-node ~/.claude/skills/my-agent-browser/scripts/migrate-config.js
-node ~/.claude/skills/my-agent-browser/scripts/migrate-config.js --apply
-```
-
-脚本会先备份配置，移除三个实测得不偿失的 flag，并开启调用栈隐藏。改完需重启 agent 会话。
 
 ## 社区
 

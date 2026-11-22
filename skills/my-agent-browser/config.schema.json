@@ -5,31 +5,31 @@
   "properties": {
     "browser": {
       "type": "object",
-      "description": "Chrome 浏览器启动配置",
+      "description": "Chrome browser launch and lifecycle settings",
       "properties": {
         "userDataDir": {
           "type": "string",
-          "description": "Chrome user-data 目录路径，支持 ~ 展开"
+          "description": "Chrome user-data directory path (supports ~ expansion)"
         },
         "headless": {
           "type": "boolean",
-          "description": "是否以无头模式运行"
+          "description": "Whether to run Chrome in headless mode"
         },
         "proxy": {
           "type": "string",
-          "description": "代理服务器地址（如 http://127.0.0.1:3067）"
+          "description": "Proxy server URL (e.g. http://127.0.0.1:3067)"
         },
         "viewport": {
           "type": "string",
-          "description": "窗口尺寸：\"WIDTHxHEIGHT\"（如 1280x720），或 \"maximized\" 最大化窗口（headless 下自动回退为 1920x1080）。留空用 Chrome 默认"
+          "description": "Window size: \"WIDTHxHEIGHT\" (e.g. 1280x720), \"maximized\" (falls back to 1920x1080 in headless), or empty for Chrome default"
         },
         "display": {
           "type": "string",
-          "description": "Linux 专用：无 DISPLAY 环境变量时的回退值（如 \":0\"）。WSLg 已自动探测，通常无需设置"
+          "description": "Linux only: fallback DISPLAY value when unset (e.g. \":0\"). WSLg is auto-detected"
         },
         "debuggingPort": {
           "type": "integer",
-          "description": "Chrome remote debugging 端口",
+          "description": "Chrome remote debugging port",
           "default": 39813
         },
         "extraArgs": {
@@ -37,61 +37,69 @@
           "items": {
             "type": "string"
           },
-          "description": "传递给 Chrome 的额外启动参数"
+          "description": "Extra command-line flags passed to Chrome"
         },
         "browserUrl": {
           "type": "string",
-          "description": "直接连接已有 Chrome 实例的 URL（设置后跳过自动启动 Chrome）"
+          "description": "Direct CDP HTTP URL of an existing Chrome instance (skips launching or closing Chrome)"
         },
         "lazyStart": {
           "type": "boolean",
-          "description": "延迟启动 Chrome 到首次工具调用时（默认 true）",
+          "description": "Delay launching Chrome until the first browser tool call (default true)",
           "default": true
+        },
+        "idleTimeout": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Auto-close idle browser/daemon after duration with unit (e.g. \"30m\", \"1h\", \"300s\") or \"never\" / 0 to never auto-close",
+          "default": "30m"
         }
       }
     },
     "mcp": {
       "type": "object",
-      "description": "chrome-devtools-mcp 服务配置",
+      "description": "chrome-devtools-mcp engine settings",
       "properties": {
         "features": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "启用的 MCP 功能标志"
+          "description": "Additional flags forwarded to chrome-devtools-mcp"
         },
         "flags": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "传递给 chrome-devtools-mcp 的额外 CLI 参数"
+          "description": "Additional CLI flags forwarded to chrome-devtools-mcp"
         },
         "backgroundNewPages": {
           "type": "boolean",
-          "description": "Wrapper 可选增强（不是上游 CLI 参数）：仅设为 true 时，为未提供 background 的 new_page 调用补 background: true。缺省或 false 保留上游行为；显式 background 参数始终优先。独立于 stealth，支持 lazy/eager/direct 模式；不控制首次浏览器启动、网页弹窗或显式置前。修改后需重启 MCP 会话。",
+          "description": "When true, supply background: true on new_page calls that omit background. Explicit background arguments always win",
           "default": false
         },
         "batchActions": {
           "type": "boolean",
           "default": true,
-          "description": "Expose run_actions on tested MCP 1.12.0 with numeric pageId tools. Enables upstream experimentalStructuredContent for interruption signals. Set false to keep native tool behavior only; restart MCP after changes."
+          "description": "Enable bounded compound batch execution (batch / run_actions)"
         }
       }
     },
     "stealth": {
       "type": "object",
-      "description": "降低自动化痕迹的配置",
+      "description": "Anti-detection settings",
       "properties": {
         "evaluateScript": {
           "type": "boolean",
-          "description": "改写 evaluate_script，使页面侧抓到的调用栈里不出现 pptr: 前缀和 MCP 安装路径（路径通常含系统用户名）。默认 true",
+          "description": "Rewrite inline evaluate_script functions so page stack traces hide pptr: and MCP install paths. Default true",
           "default": true
         },
         "sourceUrl": {
           "type": "string",
-          "description": "改写后脚本在调用栈里显示的名字。必须是不含空白字符的单个 token",
+          "description": "Source URL token shown in rewritten evaluate_script stack traces (single non-whitespace token)",
           "default": "eval.js"
         }
       }
@@ -99,7 +107,7 @@
     "disable_update_check": {
       "type": "boolean",
       "default": false,
-      "description": "Disable wrapper update networking and cached notifications. Does not control the upstream MCP updater."
+      "description": "Disable CLI update networking and cached update/announcement reminders"
     }
   }
 }

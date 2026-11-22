@@ -1,0 +1,30 @@
+{
+  "name": "my-agent-browser",
+  "version": "2.0.0",
+  "description": "Stealth, managed Chrome DevTools CLI for AI agents",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/briqt/my-agent-browser.git"
+  },
+  "bugs": {
+    "url": "https://github.com/briqt/my-agent-browser/issues"
+  },
+  "homepage": "https://github.com/briqt/my-agent-browser#readme",
+  "engines": {
+    "node": "^20.19.0 || ^22.12.0 || >=23"
+  },
+  "bin": {
+    "my-agent-browser": "src/cli.js"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:e2e": "node test/e2e.js"
+  },
+  "dependencies": {
+    "chrome-devtools-mcp": "1.13.0"
+  }
+}

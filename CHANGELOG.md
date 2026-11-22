@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.0.0 — 2026-11-22
+
+### Breaking Architecture Upgrade: Standalone CLI + Managed Daemon (No MCP Required)
+
+- **Replace MCP server setup with the `my-agent-browser` CLI**: Eliminates upfront MCP tool-schema context bloat and per-agent configuration files, decoupling browser lifetime from individual agent conversations.
+- **Bundle and pin `chrome-devtools-mcp@1.13.0`**: Installing via `npm i -g github:briqt/my-agent-browser --install-links` automatically installs the tested engine in-package — no separate global `chrome-devtools-mcp` installation required. Dynamic `package.json` `bin` resolution supports 1.13.0's GN/Ninja layout across macOS, Linux and Windows.
+- **Add configurable browser idle shutdown (`browser.idleTimeout`)**: Defaults to `"30m"` of inactivity (`ms`/`s`/`m`/`h` units supported) and supports `"never"` / `0` to keep Chrome open indefinitely. Never closes external `browser.browserUrl` browsers.
+- **Add multi-agent `owner` model (`--owner` / `MY_AGENT_BROWSER_OWNER`)**:
+  - Lock tabs on `open` or via `claim` / `release`; inspect active owners, per-tab idle durations and `canStopSafely` via `pages` and `status`.
+  - Block unauthorized cross-agent mutations on owned tabs and refuse `stop` / `restart` while other owners hold open tabs unless `--force` is passed.
+- **Ergonomic CLI + 100% DevTools native ceiling**:
+  - Concise commands (`open`, `pages`, `goto`, `reload`, `snap`, `shot`, `click`, `fill`, `fill-form`, `wait-for`, `eval --raw`, `batch`, `console`, `network`, `logpoints`) plus lossless schema-driven invocation of every upstream tool (`lighthouse_audit`, `mock_network`, `configure_webauthn`, heap analysis, …).
+  - Save inline screenshots automatically to disk instead of dumping base64 to stdout; add `--raw` on `eval` for clean shell/jq pipelines.
+  - Adopt 1.13.0 same-URL navigation boundary detection (`#3395`) and cancellation queue serialization (`#3079`) in `batch`.
+- **Smooth v1.x → v2.0 migration**: Keep `skills/my-agent-browser/scripts/start-mcp.js` as a lightweight zero-dependency deprecation stub (`my_agent_browser_mcp_deprecated`) so existing MCP configurations do not crash on startup and instruct agents/users to remove the legacy MCP entry.
+
 ## v1.5.0 — 2026-11-05
 
 - Add `run_actions`: up to 10 sequential known actions on one page, with a terminal
@@ -38,89 +54,21 @@
   to `true`, `new_page` calls without a `background` argument get `background: true`.
   Explicit arguments always win; missing/false config preserves upstream behavior.
 - Apply the policy independently of script rewriting across lazy, eager and direct
-  connection modes, including requests queued during MCP recovery. No tool calls
-  are replayed and no upstream dependency changes are needed.
-- Regression tests for opt-in defaults, explicit/invalid arguments, message
-  passthrough, script-rewrite independence, recovery and config/schema defaults.
-  The headless browser e2e now also exercises the policy enabled in lazy/eager
-  modes, with script rewriting disabled/enabled respectively.
-
-### Documentation
-
-- Document opt-in configuration and single-call foreground overrides. Clarify that
-  initial GUI launch, site-created popups and explicit bring-to-front operations
-  are outside this policy; `select_page` only brings a page forward when requested.
+  connection modes, including requests queued during MCP recovery.
 
 ## v1.2.0
 
 - Upgrade and pin chrome-devtools-mcp 1.11.0; report actual/tested MCP versions in doctor and document the new file/workspace and recording behavior.
-
 - Keep the client transport alive while retiring a stale MCP child, replay the initialize handshake, and wait for readiness before new calls.
-- Fail in-flight calls explicitly without replaying mutations; bound replacement initialization time.
-- Add offline `--doctor --json` and `--version` diagnostics.
-- Correct function-valued JavaScript examples, pageId omissions and login snapshot ordering.
-- Add recovery, UTF-8 transport and executable documentation regression checks.
 
 ## v1.1.1
 
-### Added
-
-- `scripts/migrate-config.js` — migrates a v1.0.x config to the v1.1
-  recommendations. Dry run by default, `--apply` writes it after taking a backup,
-  and it is idempotent. Deliberate swiftshader fallbacks are preserved; when it
-  removes `--disable-gpu` without one present it prints the WebGL check to run.
+- `scripts/migrate-config.js` — migrates a v1.0.x config to the v1.1 recommendations.
 
 ## v1.1.0
 
-### Added
-
-- **`evaluate_script` stack-trace hiding** (`stealth.evaluateScript`, on by default).
-  puppeteer tags every evaluated script with `//# sourceURL=pptr:...`, and that URL
-  embeds the absolute path of the chrome-devtools-mcp install — on most machines that
-  includes the OS username. Any page-side getter could read it back out of
-  `new Error().stack`. `start-mcp.js` now rewrites the `function` argument so the
-  script runs from a fresh timer stack and carries its own benign sourceURL.
-  Configurable via `stealth.sourceUrl`; pass your own `//# sourceURL=` line to opt a
-  single call out.
-- `references/anti-detection.md` — flag-by-flag measurements on Chrome 148, plus a
-  breakdown of what each MCP tool exposes to page code.
-- `scripts/start-mcp.test.js` — unit tests (`node --test`). Includes a guard that the
-  generated wrapper still matches puppeteer's `SOURCE_URL_REGEX`, so an upstream
-  change that breaks the rewrite fails the suite instead of degrading silently.
-- `scripts/stealth-e2e.js` — end-to-end check that a site-origin trap sees no `pptr:`
-  frame, install path or home directory. Runs a control pass with the rewrite
-  disabled so the test cannot pass vacuously, and covers both start modes.
-
-### Changed
-
-- **Recommended Chrome flags rewritten from measurements.** Removed from
-  `config.example.json` and all docs:
-  - `--disable-gpu` — makes `getContext('webgl')` return `null`, since software WebGL
-    has required `--enable-unsafe-swiftshader` from Chrome 110 onward. No WebGL at all
-    is a stronger bot signal than any renderer string.
-  - `--disable-blink-features=AutomationControlled` — does not change
-    `navigator.webdriver` in this setup, because only `--enable-automation` sets it and
-    nothing here passes that. It does trigger Chrome's yellow warning bar, costing
-    ~52px of viewport (1366x768 renders at 1366x629).
-  - `--hide-scrollbars` — reports scrollbar width 0 where every real Chrome, headless
-    included, reports 15.
-
-  `config.example.json` now ships the vetted set, each flag measured to leave the
-  browser indistinguishable from bare Chrome.
-- WebGL guidance is now a ladder: nothing → `--ignore-gpu-blocklist` →
-  `--enable-unsafe-swiftshader`, stopping at the first that returns a renderer string.
-- Anti-detection advice across `SKILL.md`, `troubleshooting.md` and
-  `scraping-patterns.md` now points at exit IP and WebGL renderer first, instead of
-  recommending the AutomationControlled flag.
-
-### Fixed
-
-- Client→server lines are now proxied line-by-line for the whole session. Previously
-  the lazy-start path switched to a raw `pipe()` after the first `tools/call`, and the
-  direct/non-lazy modes never parsed stdin at all.
-- Replaying buffered messages after Chrome starts no longer reorders them: the
-  triggering `tools/call` could previously be replayed *after* messages that arrived
-  later than it.
+- `evaluate_script` stack-trace hiding (`stealth.evaluateScript`, on by default).
+- Recommended Chrome flags rewritten from single-factor measurements.
 
 ## v1.0.0
 

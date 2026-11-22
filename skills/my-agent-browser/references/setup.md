@@ -1,79 +1,39 @@
-# Setup
+# Setup & Configuration
 
 ## Prerequisites
 
-- Google Chrome, Chromium, or Microsoft Edge installed
-- Node.js 20.19+ on the 20.x line, 22.12+ on the 22.x line, or 23+ (Node 24 LTS recommended)
+- Google Chrome, Microsoft Edge, Chromium, Brave, or Arc installed
+- Node.js 20.19+ on 20.x, 22.12+ on 22.x, or 23+ (Node 24 LTS recommended)
 
-## Path Convention
-
-Throughout this document, `<skill-dir>` refers to the directory containing SKILL.md. The actual path depends on your agent and installation scope:
-
-| Agent | Typical path |
-|-------|-------------|
-| Claude Code (global) | `~/.agents/skills/my-agent-browser/` |
-| Claude Code (project) | `.claude/skills/my-agent-browser/` |
-| Cursor | `~/.agents/skills/my-agent-browser/` |
-| Kiro | `~/.agents/skills/my-agent-browser/` |
-
-## Installation
-
-### Step 1: Install the skill
+## Installation (Two Commands, No MCP Setup)
 
 ```bash
-npx skills add briqt/my-agent-browser -g
+npm i -g github:briqt/my-agent-browser --install-links
+npx skills add briqt/my-agent-browser -g -y
 ```
 
-This installs the skill (SKILL.md, scripts, references) to `<skill-dir>`.
+- **No separate upstream install needed**: `my-agent-browser` declares and bundles the exact tested `chrome-devtools-mcp@1.13.0` dependency inside its own package.
+- **No MCP configuration**: Agents invoke `my-agent-browser` via shell commands only when browser automation is needed, keeping ~30k tokens of MCP tool schemas out of every conversation.
 
-### Step 2: Install the runtime dependency
+Create your personal config file (optional — sensible defaults work out of the box, and existing configs are preserved):
 
 ```bash
-npm install -g chrome-devtools-mcp@1.12.0
+my-agent-browser config init
+my-agent-browser doctor --json
 ```
 
-### Step 3: Create your personal config
+### Upgrading from v1.x (MCP Era)
 
-```bash
-node <skill-dir>/scripts/start-mcp.js --init-config
-```
-
-### Step 4: Register the MCP server in your agent/IDE
-
-Add the browser MCP server to your agent's MCP configuration. The entry you need:
-
-- **Name**: `browser`
-- **Command**: `node`
-- **Args**: `["<skill-dir>/scripts/start-mcp.js"]` (resolve `<skill-dir>` to the actual absolute path on your system)
-
-How to register depends on your environment. Consult your agent's `/help` command, official documentation, or settings UI to find where MCP servers are configured. The JSON structure is typically:
-
-```json
-{
-  "mcpServers": {
-    "browser": {
-      "command": "node",
-      "args": ["/absolute/path/to/skills/my-agent-browser/scripts/start-mcp.js"]
-    }
-  }
-}
-```
-
-On Windows, use backslashes or double-escaped forward slashes in the path.
-
-### Step 5: Verify
-
-Restart your agent session, then ask it to navigate to a page:
-
-```
-navigate to https://example.com and take a snapshot
-```
-
-If the MCP tools respond, you're set. If you get "tool not found", check that the path in step 4 is correct and that `node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js` runs without error when executed manually.
+1. Install the v2.0 CLI and update the skill with the two commands above.
+2. Remove the old `browser` MCP server entry (`start-mcp.js`) using your agent's own MCP configuration management.
+   - Until removed, `skills/my-agent-browser/scripts/start-mcp.js` acts as a lightweight deprecation stub (`my_agent_browser_mcp_deprecated`) so existing agent sessions do not crash on startup.
+3. Optional cleanup:
+   - If you previously installed `chrome-devtools-mcp` globally just for v1.x, you can run `npm uninstall -g chrome-devtools-mcp` (v2.0 manages its own bundled copy).
+   - Your existing `~/.config/agent-skills/my-agent-browser/config.json` and `user-data/` profile work unchanged in v2.0.
 
 ## Configuration
 
-Edit `~/.config/agent-skills/my-agent-browser/config.json`:
+User configuration lives at `~/.config/agent-skills/my-agent-browser/config.json` (override runtime directory with `MY_AGENT_BROWSER_HOME`):
 
 ```json
 {
@@ -82,115 +42,8 @@ Edit `~/.config/agent-skills/my-agent-browser/config.json`:
     "headless": true,
     "proxy": "",
     "viewport": "1280x720",
+    "display": "",
     "debuggingPort": 39813,
-    "extraArgs": [],
-    "browserUrl": "",
-    "lazyStart": true
-  },
-  "mcp": {
-    "backgroundNewPages": false,
-    "features": [],
-    "flags": []
-  }
-}
-```
-
-### Fields
-
-| Field | Description | Default |
-|-------|-------------|---------|
-| `browser.userDataDir` | Chrome profile directory (cookies/logins persist here) | `~/.config/agent-skills/my-agent-browser/user-data` |
-| `browser.headless` | Run without visible window (`true` for servers/CI, `false` to watch the browser) | `true` |
-| `browser.lazyStart` | Delay Chrome launch until the first tool call (saves resources if browser isn't always needed) | `true` |
-| `browser.proxy` | HTTP proxy for all browser traffic. Leave empty to use no proxy. Agent can check environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`) to detect if a proxy is configured in the system and set this accordingly | `""` (none) |
-| `browser.viewport` | Window size as `WIDTHxHEIGHT` (e.g. `1280x720`), or `"maximized"` to maximize the window. `"maximized"` needs a real window (`headless: false`); in headless it falls back to `1920x1080`. Empty = Chrome default | `"1280x720"` |
-| `browser.display` | Linux only: fallback value for the `DISPLAY` env var when it's unset (e.g. `":0"`). WSLg is auto-detected, so this is rarely needed | `""` (auto) |
-| `browser.debuggingPort` | Chrome remote debugging port | `39813` |
-| `browser.browserUrl` | Connect to an existing Chrome instance instead of launching one (e.g. `http://127.0.0.1:9222`). When set, `headless`/`userDataDir`/`extraArgs` are ignored | `""` (launch new) |
-| `browser.extraArgs` | Additional Chrome command-line flags (see below) | `[]` |
-| `mcp.batchActions` | Expose bounded `run_actions` on the tested MCP version; enables upstream structured results for boundary detection. Restart to apply | `true` |
-| `mcp.backgroundNewPages` | Wrapper boolean: only strict `true` supplies `background: true` for `new_page` calls that omit `background`; explicit `true`/`false` is respected. Omitted/`false` preserves upstream behavior | `false` |
-| `mcp.features` / `mcp.flags` | Both are passthrough arrays of CLI flags for `chrome-devtools-mcp`. Merged and forwarded as-is; the split is only cosmetic. See "Tuning the tool set" below | `[]` |
-| `stealth.evaluateScript` | Rewrite `evaluate_script` so page-visible stack traces carry no `pptr:` marker and no MCP install path (that path usually contains your OS username). See [anti-detection.md](anti-detection.md) | `true` |
-| `stealth.sourceUrl` | The name rewritten scripts show as in stack traces. Single token, no whitespace | `"eval.js"` |
-
-### Background new pages (wrapper 1.3.0)
-
-`mcp.backgroundNewPages` is a wrapper boolean, **not** an upstream CLI flag;
-do not put it in `mcp.flags`. Its default is `false` as shown above. To enable,
-merge this field into your existing config (keep your other settings):
-
-```json
-{ "mcp": { "backgroundNewPages": true } }
-```
-
-- Omitted or `false`: preserve upstream `new_page` behavior entirely.
-- Strict boolean `true`: add `background: true` only if the `new_page` call
-  does not provide `background`. Explicit `background: true` or `false` wins.
-- Lazy, eager and direct (`browserUrl`) modes share this behavior; stealth
-  settings do not affect it.
-- Restart the MCP session after changing config; edits do not apply live.
-
-This does not guarantee focus behavior for Chrome's first GUI launch, website
-`window.open` popups, or `select_page { pageId, bringToFront: true }`. Only
-`bringToFront: true` actively brings the tab to front; logical selection is not
-OS foreground focus. Pass `pageId` directly on page-scoped tools—no preceding
-`select_page` is needed. See [multi-tab-workflow.md](multi-tab-workflow.md).
-
-### Common `extraArgs` flags
-
-These are Chrome command-line switches you can add to `browser.extraArgs`. Pick what you need:
-
-| Flag | Effect |
-|------|--------|
-| `--disable-dev-shm-usage` | Use `/tmp` instead of `/dev/shm` for shared memory (fixes crashes in Docker/low-memory) |
-| `--ignore-gpu-blocklist` | Let Chrome use a GPU/Mesa driver it has blocklisted. Restores WebGL in WSL2, VMs and containers — see the WebGL note below |
-| `--enable-unsafe-swiftshader` | Software WebGL fallback for hosts with no GPU stack. Needed since Chrome 110 whenever `--disable-gpu` is used, or WebGL is unavailable entirely |
-| `--no-first-run` | Skip Chrome's first-run experience and welcome page |
-| `--disable-background-networking` | Prevent background network requests (update checks, safe browsing, etc.) |
-| `--disable-sync` | Disable Chrome account sync |
-| `--disable-translate` | Disable the built-in translation prompt |
-| `--metrics-recording-only` | Disable reporting of metrics (still records internally) |
-| `--mute-audio` | Mute all audio output |
-| `--hide-scrollbars` | Hide scrollbars (cleaner screenshots) |
-| `--disable-hang-monitor` | Disable "page unresponsive" dialogs |
-| `--disable-prompt-on-repost` | Disable "confirm form resubmission" dialogs |
-| `--disable-client-side-phishing-detection` | Disable phishing detection (avoids network calls) |
-| `--disable-component-update` | Disable component (Widevine, etc.) auto-updates |
-| `--disable-domain-reliability` | Disable domain reliability monitoring (no telemetry pings) |
-| `--disable-features=TranslateUI` | Disable the translate UI bubble |
-| `--no-sandbox` | Disable sandbox (required in some Docker/CI environments, reduces security) |
-| `--proxy-server=HOST:PORT` | Route traffic through a proxy (alternative to the `proxy` field) |
-| `--user-agent=STRING` | Override the default User-Agent string. Leave unset to use Chrome's default UA |
-
-### Flags to avoid
-
-Measured on Chrome 148, one flag at a time — details in [anti-detection.md](anti-detection.md):
-
-- **`--disable-gpu`** makes `getContext('webgl')` return `null`, because software
-  WebGL has needed an explicit `--enable-unsafe-swiftshader` since Chrome 110. A
-  browser with no WebGL is a stronger bot signal than any renderer string. Add it
-  only if you are hitting real GPU crashes, and pair it with the swiftshader flag.
-- **`--disable-blink-features=AutomationControlled`** does not change
-  `navigator.webdriver` here — only `--enable-automation` sets that, and nothing in
-  this skill passes it. The flag does trigger Chrome's yellow warning bar, costing
-  about 52px of viewport. Pair it with `--test-type` if you do need it.
-- **`--hide-scrollbars`** makes scrollbar width measure 0 where every real Chrome
-  reports 15. Use it only when you want screenshots without scrollbars.
-
-### WebGL
-
-If a site fingerprints WebGL, try in order and stop at the first that returns a
-renderer string: nothing at all → `--ignore-gpu-blocklist` → `--enable-unsafe-swiftshader`.
-The middle option yields a normal Mesa/llvmpipe string; the last yields SwiftShader,
-which reads as headless Chrome.
-
-A recommended set that reduces noise without damaging the fingerprint. Every flag
-here was measured to leave the browser indistinguishable from bare Chrome:
-
-```json
-{
-  "browser": {
     "extraArgs": [
       "--disable-dev-shm-usage",
       "--disable-background-networking",
@@ -204,139 +57,95 @@ here was measured to leave the browser indistinguishable from bare Chrome:
       "--disable-component-update",
       "--disable-domain-reliability",
       "--disable-features=TranslateUI"
-    ]
-  }
-}
-```
-
-To override the User-Agent, add `--user-agent=STRING` to `extraArgs`:
-
-```json
-{
-  "browser": {
-    "extraArgs": ["--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ..."]
-  }
-}
-```
-
-Leave it unset to use Chrome's built-in default, which is usually sufficient.
-
-### Using an existing Chrome profile (e.g., from OpenClaw)
-
-```json
-{
-  "browser": {
-    "userDataDir": "~/.openclaw/browser/openclaw/user-data"
-  }
-}
-```
-
-Note: Chrome locks user-data-dir, so you can't use the same profile simultaneously from two processes.
-
-### Tuning the tool set (`mcp.flags` / `mcp.features`)
-
-Both arrays are passed straight through to `chrome-devtools-mcp` (merged in order).
-There is no functional difference between them — the split is cosmetic, pick either.
-The authoritative flag list is always `npx chrome-devtools-mcp@1.12.0 --help`.
-
-**You usually need nothing here.** Out of the box, chrome-devtools-mcp already
-exposes the full tool set: navigation, snapshots, interaction, **plus network,
-performance, emulation, lighthouse and console tools**. The `--categoryNetwork`,
-`--categoryPerformance` and `--categoryEmulation` groups default to *on*; lighthouse
-and console tools are part of the default set too. There is no "unlock advanced tools" step — they are already there; the exact tool
-count varies with the upstream release and configuration.
-
-**`pageId` routing is on by default** (chrome-devtools-mcp 1.8+). Page-scoped
-tools (`click`, `fill`, `take_snapshot`, `navigate_page`, `evaluate_script`,
-`wait_for`, …) require `pageId` from `list_pages` or `new_page`. That is the
-supported workflow — this wrapper does not turn it off. Pass
-`--no-page-id-routing` in `mcp.flags` only if you explicitly want calls to
-fall back to the currently selected page.
-
-Use `mcp.flags` only to **shrink** or **extend** that default:
-
-**Shrink** — fewer tools = less context:
-
-| Flag | Effect |
-|------|--------|
-| `--no-categoryNetwork` | Drop `list_network_requests` / `get_network_request` |
-| `--no-categoryPerformance` | Drop the performance / trace tools |
-| `--no-categoryEmulation` | Drop `emulate` |
-| `--slim` | Alternate `navigate` / `evaluate` / `screenshot` tools; normal pageId routing and wrapper script/background policies do not apply |
-
-**Extend** — opt-in groups, off by default:
-
-| Flag | Effect |
-|------|--------|
-| `--memoryDebugging` (alias `--experimentalMemory`) | Heap-snapshot analysis (`get_heapsnapshot_dominators`, `get_heapsnapshot_retaining_paths`, `compare_heapsnapshots`, …) |
-| `--categoryExtensions` | Chrome extension tools (pipe or existing CDP connection) |
-| `--experimentalVision` | Coordinate-based `click_at(x, y)` (needs a vision / computer-use model) |
-| `--experimentalScreencast` | Screencast recording (requires ffmpeg on PATH) |
-| `--allowUnrestrictedPaths` | Allow file-writing tools outside the OS temp dir when the MCP client has no roots |
-
-Example — trim network/performance and add coordinate clicking:
-
-```json
-{
+    ],
+    "browserUrl": "",
+    "lazyStart": true,
+    "idleTimeout": "30m"
+  },
   "mcp": {
-    "flags": ["--no-categoryNetwork", "--no-categoryPerformance", "--experimentalVision"]
-  }
+    "features": [],
+    "flags": [],
+    "backgroundNewPages": false,
+    "batchActions": true
+  },
+  "stealth": {
+    "evaluateScript": true,
+    "sourceUrl": "eval.js"
+  },
+  "disable_update_check": false
 }
 ```
 
-> Note: chrome-devtools-mcp 1.8+ **warns** on unknown flags (it used to ignore
-> them silently). A typo still will not crash the server, but check `--help`
-> if a flag seems to have no effect. `--categoryPwa` exists but only works with
-> a pipe connection, not with this project's `--browserUrl` mode.
-
-`--slim` remains valid for this MCP server. The 1.12 restriction refers to the
-separate `chrome-devtools start` CLI, which this wrapper does not use. Keep the
-normal tool set when following SKILL.md.
-
-`--watchConfig` watches an upstream JSON config supplied by `--config`; it does not
-watch this wrapper's config.json. Wrapper settings and browser launch/connection
-settings still need a session restart.
-
-### Connecting to an existing Chrome instance
-
-If you need to connect to a Chrome that's already running (e.g., in Docker, a remote machine, or to preserve login state across sessions):
-
-1. Start Chrome with remote debugging enabled:
-   ```bash
-   google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-profile
-   ```
-
-2. Set `browserUrl` in config:
-   ```json
-   {
-     "browser": {
-       "browserUrl": "http://127.0.0.1:9222"
-     }
-   }
-   ```
-
-When `browserUrl` is set, chrome-devtools-mcp connects to the existing instance instead of launching a new one. The `headless`, `userDataDir`, and `extraArgs` fields are ignored in this mode (they only apply when launching Chrome).
-
-## Updating
+After editing `config.json`, apply changes immediately without restarting your agent session:
 
 ```bash
-npx skills update my-agent-browser -g
-npm install -g chrome-devtools-mcp@1.12.0
+my-agent-browser restart
 ```
 
-## Uninstalling
+### Configuration Fields
+
+| Field | Description | Default |
+|---|---|---|
+| `browser.userDataDir` | Chrome profile directory (cookies and logins persist here) | `~/.config/agent-skills/my-agent-browser/user-data` |
+| `browser.headless` | Run without a visible window (`true` for background/CI, `false` for interactive login or strict anti-bot sites) | `true` |
+| `browser.idleTimeout` | Auto-close managed Chrome and daemon after inactivity (`"30m"`, `"1h"`, `"300s"`), or `"never"` / `0` to never auto-close | `"30m"` |
+| `browser.lazyStart` | Delay launching Chrome until the first browser command (`false` launches when `start` runs) | `true` |
+| `browser.proxy` | HTTP/SOCKS proxy for browser traffic (e.g. `"http://127.0.0.1:3067"`) | `""` |
+| `browser.viewport` | Window size as `"WIDTHxHEIGHT"` (e.g. `"1280x720"`), `"maximized"` (`1920x1080` in headless), or `""` for Chrome default | `"1280x720"` |
+| `browser.display` | Linux fallback `DISPLAY` value when unset (WSLg is auto-detected) | `""` |
+| `browser.debuggingPort` | Local Chrome remote debugging port | `39813` |
+| `browser.browserUrl` | Connect to an existing external Chrome (`"http://127.0.0.1:9222"`). Skips launching and never closes external Chrome | `""` |
+| `browser.extraArgs` | Extra Chrome startup flags (see vetted list below) | Vetted 12-flag set |
+| `mcp.backgroundNewPages` | Supply `background: true` on `open` / `new_page` when not explicitly passed (`--foreground` / `--background` always win) | `false` |
+| `mcp.batchActions` | Enable `batch` (`run_actions`) compound execution | `true` |
+| `mcp.flags` / `mcp.features` | Passthrough CLI flags to `chrome-devtools-mcp` (see below) | `[]` |
+| `stealth.evaluateScript` | Rewrite inline `eval` functions so page stack traces hide `pptr:` and OS username paths | `true` |
+| `stealth.sourceUrl` | Source URL token shown in rewritten `eval` stack traces (single non-whitespace token) | `"eval.js"` |
+| `disable_update_check` | Disable CLI update checks and cached stderr notices | `false` |
+
+### Idle Timeout (`browser.idleTimeout`)
+
+- Accepts a positive integer with unit (`ms`, `s`, `m`, `h`), such as `"10m"`, `"30m"`, `"2h"`.
+- Set `"never"` (or `0`) to keep the daemon and browser alive indefinitely until `my-agent-browser stop`.
+- Can also be overridden per daemon launch:
+  ```bash
+  my-agent-browser start --idle-timeout 1h
+  my-agent-browser start --idle-timeout never
+  ```
+- Active in-flight commands pause idle expiration; countdown restarts when the command finishes.
+- In `direct` mode (`browser.browserUrl`), idle timeout stops only the local daemon and leaves your external Chrome untouched.
+
+### Tuning Upstream Tool Categories (`mcp.flags`)
+
+Out of the box, **33 tools** are active (Navigation, Input, Snapshots/Screenshots, `evaluate_script`, `set_logpoints`, Console, Network, Performance, Lighthouse, Emulation, `take_heapsnapshot`). Add flags to `mcp.flags` (and run `my-agent-browser restart`) to unlock opt-in categories:
+
+| Flag | Effect |
+|---|---|
+| `--categoryNetworkMocks` | Enable page-scoped `mock_network` and `remove_network_mock` (local file or upstream URL replacement) |
+| `--memoryDebugging` | Enable 13 V8 heap-snapshot analysis tools (`get_heapsnapshot_summary`, `get_heapsnapshot_dominators`, `compare_heapsnapshots`, …) |
+| `--categoryWebauthn` | Enable `configure_webauthn` virtual passkey / security-key authenticator |
+| `--categoryExtensions` | Enable Chrome unpacked extension management tools |
+| `--experimentalVision` | Enable coordinate-based `click_at <pageId> <x> <y>` |
+| `--workspace=/abs/path` | Restrict upstream file reads/writes to explicit directory roots instead of unrestricted local paths |
+
+### Chrome Flags to Avoid
+
+Measured on Chrome 148 one flag at a time — details in [anti-detection.md](anti-detection.md):
+- **`--disable-gpu`**: Breaks WebGL (`getContext('webgl') === null`) unless paired with `--enable-unsafe-swiftshader`. Try nothing → `--ignore-gpu-blocklist` → `--enable-unsafe-swiftshader`.
+- **`--disable-blink-features=AutomationControlled`**: Unnecessary here (`my-agent-browser` never passes `--enable-automation`, so `navigator.webdriver` is already `false`) and triggers Chrome's yellow warning bar (~52px height loss).
+- **`--hide-scrollbars`**: Reports scrollbar width `0` instead of `15` (a strong bot tell). Use only for scrollbar-free screenshots.
+
+## Updating & Uninstalling
 
 ```bash
+# Update
+npm i -g github:briqt/my-agent-browser --install-links
+npx skills add briqt/my-agent-browser -g -y
+my-agent-browser restart   # when no other agent is mid-task
+
+# Uninstall
+my-agent-browser stop --force
+npm uninstall -g my-agent-browser
 npx skills remove my-agent-browser -g
-npm uninstall -g chrome-devtools-mcp
 rm -rf ~/.config/agent-skills/my-agent-browser
 ```
-
-For MCP 1.11 filesystem roots, script/file formats, and built-in recording changes,
-see [dependency-upgrades.md](dependency-upgrades.md).
-
-For wrapper update notifications, explicit checks, disabling checks, development
-config selection and cache behavior, see [update-checks.md](update-checks.md).
-
-For compound actions, supported tools, partial results and same-session exclusion,
-see [batch-actions.md](batch-actions.md).

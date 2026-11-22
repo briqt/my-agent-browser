@@ -2,228 +2,103 @@
 
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)]()
 
-Production-ready wrapper around [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp). chrome-devtools-mcp provides the browser MCP tools, but leaves Chrome process management, multi-session sharing, and fault recovery entirely to you. This project adds the operational layer so AI agents can use the browser reliably.
+Stealth, managed Chrome DevTools **CLI + Skill** for AI agents, built on [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) **1.13.0**.
 
 **[中文文档](README_CN.md)**
 
-## What this adds over bare chrome-devtools-mcp
+## Why v2.0 Moves from MCP to CLI
 
-### Chrome Lifecycle Management
+- **Zero Context Bloat**: Exposing 33+ browser MCP tools burns ~15k–30k tokens in every conversation before you even open a webpage. The CLI + Skill approach costs ~100 tokens idle and loads workflow guidance only when needed.
+- **Zero MCP Client Setup**: Works immediately across Claude Code, Codex, Cursor, Antigravity, Kiro, and any shell-capable agent — no per-IDE JSON/TOML configuration, and config changes apply via `my-agent-browser restart` without restarting your agent conversation.
+- **Decoupled Lifecycle + Unix Composability**: Pipe `eval --raw | jq`, save heavy snapshots to disk (`snap 1 /tmp/s.txt && grep ...`), and share one persistent logged-in Chrome safely across multiple agents.
 
-- Auto-find Chrome on your system (macOS/Linux/Windows, searches 10+ paths including Edge/Brave/Arc/Chromium)
-- Lazy start — Chrome only launches on first `tools/call`, not at agent startup
-- Multiple agent sessions share one Chrome instance via `browser.lock` reference counting
-- Last session to exit automatically closes Chrome
-- No orphans after agent crash: parent heartbeat detection + startup orphan process cleanup
-- WSL / headless Linux: auto-detect and configure DISPLAY (WSLg, Wayland, X11)
+## What This Adds Over Bare Browser CLIs
 
-### Fault Recovery
+### 1. Measured Anti-Detection & Clean Browser Launch
+- Launches system Chrome / Edge / Brave / Chromium / Arc directly **without** Puppeteer's `--enable-automation` (`navigator.webdriver === false` out of the box, no 400 MB Chrome-for-Testing download required).
+- Automatically rewrites inline `eval` (`evaluate_script`) functions so page-side `Error.stack` traps see no `pptr:` frame and no install path leaking your OS username — see [anti-detection.md](skills/my-agent-browser/references/anti-detection.md).
+- Ships a measured Chrome flag set (preserving real GPU WebGL and native scrollbar metrics instead of cargo-cult flags that trigger bot detectors).
 
-- Chrome crash detection via CDP port probe — never trusts error text alone
-- Confirmed crash → auto-relaunch Chrome, rewrite MCP response to tell agent to re-navigate
-- MCP stale state (referencing closed tab) → restart only the MCP child process, Chrome stays
-- Profile lock leftover (SingletonLock after hard kill) → auto-clean before launch
+### 2. Multi-Agent `owner` Coordination & Configurable Idle Shutdown
+- **Per-tab `owner` locks** (`--owner <name>` / `MY_AGENT_BROWSER_OWNER`): Agents can lock tabs they open or claim, discover who else is using Chrome via `pages` and `status` (`canStopSafely`), and prevent other agents from mutating their tabs or stopping the shared browser mid-task.
+- **Configurable idle auto-close** (`browser.idleTimeout`): Defaults to `"30m"` so idle browsers don't linger forever, or set `"never"` (`0`) to keep Chrome open permanently. External `browserUrl` browsers are never closed.
+- **Crash & Stale-State Self-Healing**: Probes CDP `/json/version` before relaunching crashed browsers, cleans stale `SingletonLock` files, and hot-replaces stale MCP engine subprocesses without replaying mutations.
 
-### Config-driven + Anti-detection
-
-- Headless mode, proxy, viewport size, custom launch args — all Chrome startup flags configurable
-- `evaluate_script` stack traces are stripped of the `pptr:` marker and the MCP install path (which normally leaks your OS username) — measured against a site-origin trap, see [anti-detection.md](skills/my-agent-browser/references/anti-detection.md)
-- Flag recommendations backed by one-flag-at-a-time measurements rather than folklore
-- Direct connection to existing Chrome (`browserUrl` mode, for pre-authenticated long-lived sessions)
-- Opt-in background tabs via `mcp.backgroundNewPages` (default `false`), preserving explicit per-call choices
-
-### Agent Workflow Guidance (SKILL.md)
-
-- Heavy pages: file-based snapshots to prevent DOM overflow crashes
-- Error recovery: stale UIDs, timeouts, Chrome restart — correct response for each
-- Multi-tab: open/extract/close pattern, UID isolation between tabs
-- Scraping: URL-based pagination, lazy-load triggering, JS extraction
-- Login flows: persistent profile, automated credentials, connect to existing session
+### 3. Ergonomic Daily Commands + 100% Chrome DevTools Native Ceiling
+- Concise commands for the core loop (`open`, `pages`, `goto`, `snap`, `shot`, `click`, `fill`, `fill-form`, `wait-for`, `eval --raw`, `batch`).
+- Fixes upstream CLI gaps (`fill-form` and `wait-for` restored, consistent `<pageId>` ordering on `eval`, `--clear` on `logpoints`, automatic file saving on `shot` instead of base64 context dumps).
+- **Zero-loss native ceiling**: Every `chrome-devtools-mcp` tool (`lighthouse_audit`, `set_logpoints`, `performance_start_trace`, `take_heapsnapshot`, `mock_network`, `configure_webauthn`, `emulate`, …) is directly callable via `my-agent-browser <tool>`.
 
 ## Install
 
+Only two commands — `chrome-devtools-mcp@1.13.0` is bundled and managed automatically:
+
 ```bash
+npm i -g github:briqt/my-agent-browser --install-links
 npx skills add briqt/my-agent-browser -g -y
-npm install -g chrome-devtools-mcp@1.12.0
-node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js --init-config
 ```
 
-Then register the MCP server in your agent:
-
-### Claude Code
+Optional first-time config initialization & health check:
 
 ```bash
-claude mcp add browser -s user -- node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js
+my-agent-browser config init
+my-agent-browser doctor --json
 ```
 
-Or add to your project's `.mcp.json`:
+### Upgrading from v1.x (MCP)
+
+1. Run the two install commands above.
+2. Remove the old `browser` MCP server entry (`start-mcp.js`) using your agent's own MCP configuration settings. *(Until removed, a tiny compatibility stub at `skills/my-agent-browser/scripts/start-mcp.js` prevents startup errors and reminds the agent to remove the legacy MCP entry.)*
+3. Your existing `~/.config/agent-skills/my-agent-browser/config.json` and `user-data/` profile continue to work unchanged.
+
+## Quick Start
+
+```bash
+my-agent-browser open "https://example.com" --owner agent-1
+my-agent-browser pages
+my-agent-browser snap 1
+my-agent-browser eval 1 "() => document.title" --raw
+my-agent-browser shot 1 /tmp/example.png
+my-agent-browser status
+my-agent-browser close-page 1 --owner agent-1
+```
+
+## Configuration Highlights
+
+Edit `~/.config/agent-skills/my-agent-browser/config.json` (apply anytime with `my-agent-browser restart`):
 
 ```json
 {
-  "mcpServers": {
-    "browser": {
-      "command": "node",
-      "args": ["~/.agents/skills/my-agent-browser/scripts/start-mcp.js"]
-    }
+  "browser": {
+    "headless": true,
+    "idleTimeout": "30m",
+    "proxy": "",
+    "viewport": "1280x720"
+  },
+  "mcp": {
+    "backgroundNewPages": false,
+    "batchActions": true,
+    "flags": []
+  },
+  "stealth": {
+    "evaluateScript": true,
+    "sourceUrl": "eval.js"
   }
 }
 ```
 
-### Codex
+- Set `"idleTimeout": "never"` (or `0`) to never auto-close Chrome.
+- Set `"backgroundNewPages": true` to open new tabs in the background by default unless `--foreground` is passed.
+- Add `"--categoryNetworkMocks"` or `"--memoryDebugging"` to `mcp.flags` to unlock network response mocking and V8 heap analysis tools.
 
-```bash
-codex mcp add browser -- node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js
-```
-
-Or add to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.browser]
-command = "node"
-args = ["~/.agents/skills/my-agent-browser/scripts/start-mcp.js"]
-enabled = true
-```
-
-### Other MCP agents (Cursor, Kiro, etc.)
-
-Add the MCP server entry per your agent's documentation:
-- Command: `node`
-- Args: `["~/.agents/skills/my-agent-browser/scripts/start-mcp.js"]`
-
-## How it works
-
-```
-Agent (Claude Code / Codex / Cursor / Kiro / etc.)
-  ↓ MCP tool calls (native)
-start-mcp.js
-  ↓ reads config, manages Chrome lifecycle via browser.lock
-  ↓ launches Chrome (detached) with --remote-debugging-port
-  ↓ spawns chrome-devtools-mcp with --browserUrl to connect
-chrome-devtools-mcp
-  ↓ controls Chrome via CDP
-Chrome (shared across sessions)
-```
-
-- Chrome runs as a detached process, shared by multiple MCP sessions
-- `browser.lock` tracks active client count; last client to exit kills Chrome
-- All browser settings live in `~/.config/agent-skills/my-agent-browser/config.json`
-- Restart the MCP session after config changes
-
-## Background new tabs (v1.3.0)
-
-The MCP dependency remains **chrome-devtools-mcp 1.12.0**. In
-`~/.config/agent-skills/my-agent-browser/config.json`, the default is:
-
-```json
-{ "mcp": { "backgroundNewPages": false } }
-```
-
-To opt in, set:
-
-```json
-{ "mcp": { "backgroundNewPages": true } }
-```
-
-Merge this field into your existing config, then restart the MCP session.
-`mcp.backgroundNewPages` is a wrapper boolean, not an upstream CLI flag; do not
-put it in `mcp.flags`. Omitted or `false` leaves upstream `new_page` behavior
-entirely unchanged. Only strict boolean `true` adds `background: true` when a
-`new_page` call omits `background`; explicit `background: true` or `false` is
-always respected. This works in lazy, eager and direct (`browserUrl`) modes,
-independently of stealth settings.
-
-This is not a global focus guarantee: it does not cover Chrome's first GUI
-launch, website `window.open` popups, or `select_page { pageId, bringToFront: true }`.
-Only `bringToFront: true` actively brings a selected tab to front; logical
-selection is not OS foreground focus. Pass `pageId` directly on page-scoped
-calls—no preceding `select_page` is needed. See [setup](skills/my-agent-browser/references/setup.md)
-and [multi-tab workflow](skills/my-agent-browser/references/multi-tab-workflow.md).
-
-## What the SKILL.md teaches agents
-
-The bundled SKILL.md provides workflow guidance so agents avoid common pitfalls:
-
-- **Heavy pages** — file-based snapshots to prevent DOM overflow crashes
-- **Scraping patterns** — URL-based pagination, lazy-load triggering, JS extraction
-- **Multi-tab** — open/extract/close pattern, UID isolation between tabs
-- **Error recovery** — stale UIDs, timeouts, Chrome restarts
-- **Login flows** — persistent profiles, automated credentials, existing sessions
-
-## Project structure
-
-```
-├── skills/my-agent-browser/
-│   ├── SKILL.md                 # Agent workflow guide
-│   ├── scripts/
-│   │   ├── start-mcp.js        # MCP server wrapper
-│   │   ├── migrate-config.js   # v1.0 → v1.1 config migration
-│   │   ├── start-mcp.test.js   # Unit tests (node --test)
-│   │   └── stealth-e2e.js      # End-to-end stack-trace leak check
-│   ├── config.example.json      # Config template
-│   ├── config.schema.json       # JSON Schema for config validation
-│   └── references/
-│       ├── setup.md             # Installation & configuration
-│       ├── anti-detection.md    # Measured fingerprint/flag guidance
-│       ├── troubleshooting.md   # Common issues & fixes
-│       ├── advanced-tools.md    # Performance, Lighthouse, Console, Emulation
-│       ├── network-debugging.md # Network request inspection
-│       ├── scraping-patterns.md # Data extraction patterns
-│       ├── multi-tab-workflow.md
-│       └── javascript-execution.md
-├── README.md
-└── README_CN.md
-```
-
-## Multiple actions in one call (v1.5.0)
-
-`run_actions` executes up to 10 known actions sequentially on one observed, stable
-page. It supports `fill`, `fill_form`, `hover`, and a terminal `click` / `press_key`,
-with an optional final snapshot or snapshot file. Prefer native `fill_form` when
-filling several fields is the entire task.
-
-The wrapper validates all supported parameter shapes before dispatch, stops on
-errors/page boundaries and returns per-step status. Timeout/cancellation does not
-prove the current action stopped: no replay or rollback is attempted, and other
-same-session tools stay excluded until it settles. Separate sessions still need
-separate tabs to avoid interference.
-
-`mcp.batchActions` defaults to enabled on tested MCP **1.12.0** and automatically
-enables upstream structured results. Set it to `false` to disable; restart the MCP
-session after upgrading. See the [batch contract and recovery guide](skills/my-agent-browser/references/batch-actions.md).
-
-## Update checks and notices (v1.4.0)
-
-The MCP wrapper checks for project updates asynchronously without blocking startup.
-Checks use a one-hour interval (five-minute backoff after failure); version and
-announcement reminders each have a 24-hour cooldown. Hints go to stderr and never
-install anything. Set `disable_update_check: true` or pass `--no-update-check` to
-skip networking and cached reminders.
-
-```bash
-node ~/.agents/skills/my-agent-browser/scripts/start-mcp.js --check-update --json
-```
-
-`--version`, `--doctor`, `--help` and `--init-config` stay offline. Update the skill
-and MCP dependency separately, then restart the MCP session. See
-[update behavior and publishing](skills/my-agent-browser/references/update-checks.md).
+See [setup.md](skills/my-agent-browser/references/setup.md), [multi-tab-workflow.md](skills/my-agent-browser/references/multi-tab-workflow.md), and [batch-actions.md](skills/my-agent-browser/references/batch-actions.md) for full details.
 
 ## Updating
 
 ```bash
-npx skills update my-agent-browser -g -y
-npm install -g chrome-devtools-mcp@1.12.0
+npm i -g github:briqt/my-agent-browser --install-links
+npx skills add briqt/my-agent-browser -g -y
 ```
-
-Upgrading from v1.0.x, migrate your config to the v1.1 flag recommendations
-(dry run first, then `--apply`):
-
-```bash
-node ~/.claude/skills/my-agent-browser/scripts/migrate-config.js
-node ~/.claude/skills/my-agent-browser/scripts/migrate-config.js --apply
-```
-
-It backs the file up, drops the three flags measured to hurt more than they help,
-and enables stack-trace hiding. Restart your agent session afterwards.
 
 ## Community
 

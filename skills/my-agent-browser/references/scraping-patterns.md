@@ -1,214 +1,69 @@
 # Scraping Patterns
 
-Best practices for extracting data from web pages using browser automation tools.
-Page-scoped tools require `pageId` from `list_pages` or `new_page`. Examples use `pageId` as that value.
+Best practices for reliable data extraction with `my-agent-browser`.
 
-## Pattern 1: Simple Page Scrape
+## Pattern 1: Snapshot-First Extraction (Default)
 
-Navigate to a page, take a snapshot, and extract information from the accessibility tree.
+The accessibility tree already includes visible text and link `url="..."` attributes —
+most structured pages need zero custom JavaScript:
 
-```
-1. navigate_page { pageId, url: "https://news.example.com" }
-2. wait_for { pageId, text: ["Latest News"] }
-3. take_snapshot { pageId }
-   → Read the tree structure to find article titles, links, dates
-   → The accessibility tree gives you text content and link URLs directly
-```
-
-Best for: pages with well-structured content (articles, product listings, directories).
-
-The accessibility tree already contains text content and link URLs — no need for
-`evaluate_script` in most cases. Just read the snapshot output.
-
-## Pattern 2: Paginated Data
-
-Loop through pages, extracting data from each one.
-
-```
-1. navigate_page { pageId, url: "https://shop.example.com/products?page=1" }
-2. wait_for { pageId, text: ["Products"] }
-3. take_snapshot { pageId } → extract product names, prices, links from tree
-4. take_snapshot { pageId } → find "Next" button uid
-5. click { pageId, uid: "1_99" }  — click Next
-6. wait_for { pageId, text: ["Page 2"] }  — or wait for content change
-7. take_snapshot { pageId } → extract page 2 data
-8. Repeat until no "Next" button in snapshot
+```bash
+my-agent-browser open "https://news.example.com" --owner scraper
+# → suppose pageId is 2
+my-agent-browser wait-for 2 "Latest"
+my-agent-browser snap 2
 ```
 
-Alternative — URL-based pagination (more reliable):
+For heavy pages (200+ items), write the snapshot to disk and filter with standard Unix tools:
 
-```
-for page in 1, 2, 3, ...:
-  1. navigate_page { pageId, url: "https://shop.example.com/products?page={page}" }
-  2. wait_for { pageId, text: ["Products"] }
-  3. take_snapshot { pageId } → extract data
-  4. If snapshot shows "No results" or page is empty → stop
+```bash
+my-agent-browser snap 2 /tmp/news.txt
+grep 'link "' /tmp/news.txt | head -n 40
 ```
 
-URL-based pagination avoids stale UID issues and is easier to resume if interrupted.
+## Pattern 2: URL-Based Pagination (Preferred over Clicking "Next")
 
-## Pattern 3: Dynamic Content
+Navigating directly to `?page=N` avoids stale UIDs and resumes cleanly after interruption:
 
-For pages that load content asynchronously (infinite scroll, lazy loading, AJAX tabs):
-
-```
-1. navigate_page { pageId, url: "https://app.example.com/feed" }
-2. wait_for { pageId, text: ["Feed"] }
-3. take_snapshot { pageId } → extract visible items
-4. press_key { pageId, key: "End" }  — scroll to bottom to trigger lazy load
-5. wait_for { pageId, text: ["Loading complete"] }  — or a known item
-6. take_snapshot { pageId } → extract newly loaded items
+```bash
+for page in 1 2 3; do
+  my-agent-browser goto 2 "https://shop.example.com/products?page=${page}"
+  my-agent-browser wait-for 2 "Products"
+  my-agent-browser snap 2 "/tmp/products-p${page}.txt"
+done
 ```
 
-For content behind tabs or accordions:
+## Pattern 3: Lazy-Loaded / Infinite-Scroll Content
 
-```
-1. navigate_page { pageId, url: "https://example.com/product/123" }
-2. take_snapshot { pageId } → find tab uid
-3. click { pageId, uid: "1_30" }  — click "Specifications" tab
-4. wait_for { pageId, text: ["Weight"] }  — wait for tab content
-5. take_snapshot { pageId } → extract specification data
+```bash
+my-agent-browser press 2 End
+my-agent-browser wait-for 2 "Load more"
+my-agent-browser snap 2 /tmp/feed.txt
 ```
 
-## Pattern 4: Complex Extraction with evaluate_script
+## Pattern 4: Structured Table / JSON-LD Extraction (`eval --raw`)
 
-When the accessibility tree doesn't give you the structure you need (e.g., table
-data with row/column relationships, or deeply nested data), use JavaScript:
+When row/column relationships or hidden metadata (`application/ld+json`) aren't preserved in the a11y tree:
 
-### Extract a Table
+```bash
+my-agent-browser eval 2 "() => { const rows = document.querySelectorAll('table tbody tr'); return Array.from(rows).map(r => { const c = r.querySelectorAll('td'); return { name: c[0]?.textContent.trim(), price: c[1]?.textContent.trim() }; }); }" --raw | jq .
 
-```
-evaluate_script { pageId, function: "() => { const rows = document.querySelectorAll('table tbody tr'); return Array.from(rows).map(row => { const cells = row.querySelectorAll('td'); return { name: cells[0]?.textContent.trim(), price: cells[1]?.textContent.trim(), stock: cells[2]?.textContent.trim() }; }); }" }
-```
-
-### Extract All Links with Context
-
-```
-evaluate_script { pageId, function: "() => { return Array.from(document.querySelectorAll('a[href]')).map(a => ({ text: a.textContent.trim(), href: a.href, parent: a.closest('article,section,div')?.className || '' })).filter(l => l.text); }" }
+my-agent-browser eval 2 "() => { const ld = document.querySelector('script[type=\"application/ld+json\"]'); return ld ? JSON.parse(ld.textContent) : null; }" --raw | jq .
 ```
 
-### Extract Structured Data (JSON-LD, meta tags)
+## Login-Gated Sites
 
-```
-evaluate_script { pageId, function: "() => { const ld = document.querySelector('script[type=\"application/ld+json\"]'); return ld ? JSON.parse(ld.textContent) : null; }" }
-```
+1. **Persistent Profile (Recommended)**:
+   - Temporarily run headed (`my-agent-browser restart --headed` or `"headless": false` in `config.json`), log in manually once, then switch back to headless (`my-agent-browser restart --headless`). Cookies stay in `~/.config/agent-skills/my-agent-browser/user-data`.
+2. **Automated Form Login**:
+   - Observe UIDs with `snap`, then run `fill-form` + `click` (or `batch ... --snapshot final`).
+3. **Existing External Browser**:
+   - Launch your own Chrome with `--remote-debugging-port=9222` and set `"browserUrl": "http://127.0.0.1:9222"` in `config.json`.
 
-### Extract Computed Styles or Dimensions
+## Anti-Detection Order of Operations
 
-```
-evaluate_script { pageId, function: "() => { const el = document.querySelector('.hero-image'); const rect = el.getBoundingClientRect(); return { width: rect.width, height: rect.height, visible: rect.height > 0 }; }" }
-```
-
-Tips for `evaluate_script`:
-- The function must be a string containing a JavaScript function expression.
-- Return JSON-serializable data (no DOM nodes, no circular references).
-- Use `() => { ... }` arrow function syntax.
-- Keep scripts focused — extract one type of data per call.
-
-## Anti-Detection
-
-Sites may block automated browsers. The short version, in the order that actually
-matters — full measurements in [anti-detection.md](anti-detection.md):
-
-1. **Exit IP and pacing** dominate everything else. Use `browser.proxy`.
-2. **Check the WebGL renderer.** A `SwiftShader` string or a missing WebGL context
-   is the one signal a stock detector still catches. Add `--ignore-gpu-blocklist`
-   and remove `--disable-gpu` if present.
-3. **Prefer `take_snapshot` + `click`/`fill` over `evaluate_script`.** Snapshots and
-   input events are invisible to page code; running script is not, even though
-   `start-mcp.js` strips the `pptr:` marker and install path from its stack traces.
-4. **Reuse a real `userDataDir`** with cookies and history.
-5. **`headless: false`** for sites that screen aggressively — headless leaks through
-   the UA and `screen` size no matter what flags you pass.
-
-Do not reach for `--disable-blink-features=AutomationControlled`: it does not change
-`navigator.webdriver` in this setup and costs ~52px of viewport.
-
-## Handling Login-Gated Content
-
-### Option A: Persistent Profile (Recommended)
-
-Log in once manually, then reuse the profile:
-
-1. Set `"headless": false` in config temporarily
-2. Ask the agent to navigate to the login page
-3. Log in manually in the visible browser
-4. Set `"headless": true` again — cookies persist in `userDataDir`
-
-### Option B: Automated Login
-
-```
-1. navigate_page { pageId, url: "https://app.example.com/login" }
-2. take_snapshot { pageId } → find email/password fields
-3. fill { pageId, uid: "1_5", value: "user@example.com" }
-4. fill { pageId, uid: "1_7", value: "password123" }
-5. click { pageId, uid: "1_10" }  — submit
-6. wait_for { pageId, text: ["Dashboard"] }
-7. — Now proceed with scraping authenticated pages
-```
-
-### Option C: Connect to Existing Session
-
-If you have a Chrome instance already logged in:
-
-```json
-{
-  "browser": {
-    "browserUrl": "http://127.0.0.1:9222"
-  }
-}
-```
-
-## Rate Limiting and Politeness
-
-### Respect the Site
-
-- Don't hammer a site with rapid-fire requests. The natural pace of
-  snapshot → process → next action provides some built-in delay.
-- For bulk scraping, add explicit waits between page loads if needed.
-- Check `robots.txt` — some paths are explicitly disallowed.
-- Respect rate limit headers (429 status, Retry-After header).
-
-### Handling Rate Limits
-
-If you get blocked or rate-limited:
-
-```
-1. navigate_page { pageId, url: "https://example.com/page" }
-2. take_snapshot { pageId }
-   → If snapshot shows "Rate limited" or "Please wait":
-3. wait_for { pageId, text: ["expected content"] }  — with longer timeout
-   → Or navigate to a different section first, come back later
-```
-
-### Batch Size
-
-For large scraping jobs:
-- Process 10-20 pages, then pause and verify data quality.
-- If the site starts returning CAPTCHAs or blocks, stop and reassess.
-- Consider whether an API exists — always prefer official APIs over scraping.
-
-## Complete Example: Scrape Product Catalog
-
-```
-1. navigate_page { pageId, url: "https://shop.example.com/category/electronics" }
-2. wait_for { pageId, text: ["Electronics"] }
-3. take_snapshot { pageId }
-   → Extract: product names, prices, ratings from the tree
-   → Find: pagination controls
-
-4. — For each product that needs details:
-   click { pageId, uid: "1_15" }  — click product link
-   wait_for { pageId, text: ["Add to Cart"] }
-   take_snapshot { pageId } → extract full description, specs, images
-   evaluate_script { pageId, function: "() => document.querySelector('.price').dataset.raw" }
-   navigate_page { pageId, url: "https://shop.example.com/category/electronics" }
-   wait_for { pageId, text: ["Electronics"] }
-   take_snapshot { pageId } → get fresh UIDs for next product
-
-5. — Pagination:
-   take_snapshot { pageId } → find "Next page" button
-   click { pageId, uid: "1_50" }
-   wait_for { pageId, text: ["Page 2"] }
-   take_snapshot { pageId } → repeat extraction
-```
+1. **Exit IP & pacing** (`browser.proxy`, natural delays between pages).
+2. **WebGL renderer** (verify real GPU or `--ignore-gpu-blocklist`; avoid bare `--disable-gpu`).
+3. **Prefer `snap` + `click` / `fill` over `eval`** (native CDP input is invisible to page JS).
+4. **Headed mode** (`--headed` / `"headless": false`) for sites screening `HeadlessChrome`.
+See [anti-detection.md](anti-detection.md) for full measurements.

@@ -1,167 +1,51 @@
-# Network Debugging
+# Network Debugging & Mocking
 
-Guide for debugging network requests using the Network category tools.
-Page-scoped tools (`navigate_page`, `take_snapshot`, `click`, `list_network_requests`, …) require `pageId`.
+Inspect live requests/responses and (optionally) override responses per page.
 
-**Availability:** on by default — no flag needed. (Disable with `--no-categoryNetwork` in `mcp.flags` if you want to shrink the tool set.)
+## Default Network Inspection Tools
 
-## Available Tools
+Enabled by default (disable only if shrinking tool count via `"--no-categoryNetwork"` in `mcp.flags`):
 
-| Tool | Purpose |
-|------|---------|
-| `list_network_requests` | List captured network requests (filterable by resource type) |
-| `get_network_request { reqid }` | Get full request/response details for a specific request |
+| Command | Purpose |
+|---|---|
+| `my-agent-browser network <pageId> [--resource-types <type...>]` | List captured requests (`list_network_requests`) |
+| `my-agent-browser get_network_request <pageId> --reqid <id>` | Inspect full headers, bodies, and timing (or save via `--request-file-path` / `--response-file-path`) |
 
-## Resource Types
+### Supported `--resource-types` Filters
 
-When filtering with `list_network_requests`, common resource types:
+`document`, `stylesheet`, `image`, `media`, `font`, `script`, `texttrack`, `xhr`, `fetch`,
+`prefetch`, `eventsource`, `manifest`, `signedexchange`, `ping`, `cspviolationreport`,
+`preflight`, `fedcm`, `other`. *(Note: `websocket` is not supported as a filter in upstream 1.12+.)*
 
-| Type | What it captures |
-|------|-----------------|
-| `xhr` | XMLHttpRequest calls |
-| `fetch` | Fetch API calls |
-| `document` | HTML page loads |
-| `stylesheet` | CSS files |
-| `script` | JavaScript files |
-| `image` | Images (png, jpg, svg, etc.) |
-| `font` | Web fonts |
-| `websocket` | WebSocket connections |
-| `media` | Audio/video resources |
+### Core Workflow: Diagnose Failing API Calls
 
-## Core Workflow
-
-```
-1. navigate_page { pageId, url: "https://app.example.com" }
-2. take_snapshot { pageId } → interact with the page (click buttons, submit forms)
-3. list_network_requests { pageId }
-   → Returns: list of requests with reqid, url, method, status, resourceType, size
-4. get_network_request { reqid: "req_15" }
-   → Returns: full headers, request body, response body, timing breakdown
+```bash
+my-agent-browser goto 1 "https://app.example.com/dashboard"
+my-agent-browser click 1 1_20
+my-agent-browser network 1 --resource-types fetch --resource-types xhr
+# → Find failing reqid (e.g. reqid=7, status=403)
+my-agent-browser get_network_request 1 --reqid 7 --response-file-path /tmp/api-err.json
 ```
 
-## Workflow: Find Why an API Call Is Failing
+Binary request/response bodies are preserved byte-for-byte when saved to disk.
 
-```
-1. navigate_page { pageId, url: "https://app.example.com/dashboard" }
-2. take_snapshot { pageId }
-3. click { pageId, uid: "1_20" }  — trigger the action that fails
-4. wait_for { pageId, text: ["Error"] }  — or just wait a moment
-5. list_network_requests { pageId }
-   → Look for requests with status 4xx or 5xx
-   → Example output:
-     reqid=req_7  POST https://api.example.com/data  status=403  type=fetch
-     reqid=req_8  GET https://api.example.com/user   status=200  type=fetch
-6. get_network_request { reqid: "req_7" }
-   → Shows:
-     - Request headers (check Authorization, Content-Type)
-     - Request body (check payload format)
-     - Response headers
-     - Response body (error message from server)
-     - Timing (DNS, connect, TLS, waiting, download)
-```
+## Page-Scoped Network Mocking (Opt-In, Upstream 1.13+)
 
-## Workflow: Identify Slow Requests
+Add `"--categoryNetworkMocks"` to `mcp.flags` in `config.json` and run `my-agent-browser restart`.
 
-```
-1. navigate_page { pageId, url: "https://slow-app.example.com" }
-2. wait_for { pageId, text: ["Ready"] }
-3. list_network_requests { pageId }
-   → Look at timing/size columns to find outliers
-   → Sort mentally by response time or size
-4. get_network_request { reqid: "req_12" }
-   → Check timing breakdown:
-     - DNS lookup: was resolution slow?
-     - Connection: TCP/TLS handshake delay?
-     - Waiting (TTFB): server processing time?
-     - Download: large payload?
+```bash
+# Replace a remote script or API response with a local file (re-read on every request, survives reloads)
+my-agent-browser mock_network 1 --route "https://example.com/app.js*" --body /tmp/local-app.js
+
+# Or redirect GET/HEAD requests to another HTTP(S) upstream URL
+my-agent-browser mock_network 1 --route "https://api.example.com/v1/*" --upstream "http://127.0.0.1:4000/v1/"
+
+# Inspect active mocks and hit counts on page 1
+my-agent-browser mock_network 1
+
+# Remove specific mock or clear all mocks on page 1
+my-agent-browser remove_network_mock 1 --route "https://example.com/app.js*"
+my-agent-browser remove_network_mock 1
 ```
 
-## Workflow: Verify API Request Format
-
-When debugging form submissions or API integrations:
-
-```
-1. navigate_page { pageId, url: "https://app.example.com/form" }
-2. take_snapshot { pageId } → fill the form
-3. fill { pageId, uid: "1_5", value: "test data" }
-4. click { pageId, uid: "1_10" }  — submit
-5. list_network_requests { pageId }
-   → Find the POST/PUT request
-6. get_network_request { reqid: "req_5" }
-   → Verify:
-     - Content-Type header matches expected (application/json vs form-data)
-     - Request body has correct field names and values
-     - Authorization header is present and valid
-```
-
-## Workflow: Check What Resources a Page Loads
-
-```
-1. navigate_page { pageId, url: "https://example.com" }
-2. list_network_requests { pageId }
-   → See all resources: documents, scripts, stylesheets, images, fonts, API calls
-   → Useful for:
-     - Finding third-party scripts (analytics, ads)
-     - Identifying large resources slowing the page
-     - Checking if resources load from CDN vs origin
-     - Verifying caching headers
-```
-
-## Tips
-
-### Filtering Large Request Lists
-
-Pages often make 50-100+ requests. Focus your investigation:
-- Filter by type (`fetch` or `xhr`) to see only API calls
-- Look at status codes: 4xx/5xx indicate failures
-- Look at large sizes: may indicate uncompressed or oversized responses
-- Look at the URL path to identify the relevant endpoint
-
-### Timing Interpretation
-
-When `get_network_request` returns timing data:
-- High DNS time → DNS resolution issue, consider preconnect
-- High connect time → server far away or overloaded
-- High TTFB (waiting) → server processing is slow
-- High download time → response payload too large, consider compression
-
-### Request Ordering
-
-Requests are listed in chronological order. The first requests are typically:
-1. The HTML document
-2. CSS and JS referenced in the HTML
-3. Fonts and images referenced in CSS
-4. API calls triggered by JavaScript
-
-Later requests are usually triggered by user interaction or lazy loading.
-
-### Combining with Console
-
-If an API call fails, also check `list_console_messages` — the application may
-log additional error context (parsed error messages, retry attempts, fallback behavior).
-
-### Combining with Performance
-
-Use `performance_start_trace` / `performance_stop_trace` alongside network
-inspection to correlate slow requests with rendering delays. The performance
-trace shows when the browser was blocked waiting for resources.
-
-## Common Patterns
-
-### CORS Failure
-- Request shows status 0 or is missing from the list
-- Check console for "Access-Control-Allow-Origin" errors
-- The preflight OPTIONS request may have failed
-
-### Authentication Failure
-- Status 401 or 403
-- Check if Authorization header is present in request
-- Check if token is expired (decode JWT from the header)
-
-### Redirect Chain
-- Status 301/302 followed by another request to the redirect target
-- Multiple redirects slow down page load
-
-### Missing Content-Type
-- Server returns 200 but response body is garbled
-- Check Content-Type header in response — may be wrong encoding
+> Active mocks disable the page HTTP cache and intercept requests on that tab, so Lighthouse and performance traces include a measurement warning until the last mock is removed.

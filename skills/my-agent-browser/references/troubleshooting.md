@@ -1,156 +1,31 @@
 # Troubleshooting
 
+Start with `my-agent-browser doctor --json`. It checks CLI/Skill/Node/Chrome/engine paths,
+validates `config.json`, and inspects any running daemon **without launching Chrome**.
+
 ## Common Issues
 
-### "No pages found"
+| Symptom | Cause | Action |
+|---|---|---|
+| `command not found: my-agent-browser` | CLI not installed or global npm bin missing from `PATH` | `npm i -g github:briqt/my-agent-browser --install-links` |
+| `my_agent_browser_mcp_deprecated` in MCP tools | Leftover v1.x MCP entry still configured in your agent | Remove the legacy `start-mcp.js` MCP server using your agent's own MCP settings |
+| `Page <id> is owned by '<owner>'` | Tab is locked to another agent | Open your own tab (`open <url> --owner <you>`), pass matching `--owner`, or `--force` if takeover is authorized |
+| `Refusing to stop browser: owner '...' holds page(s)` | Another agent has active locked tab(s) | Close only your own tab (`close-page <id>`); inspect `my-agent-browser status` |
+| `No page found` / invalid `pageId` | Tab was closed or daemon restarted | Run `my-agent-browser pages` and use a current numeric `pageId` |
+| Click/fill does nothing or fails | Stale UID after DOM update | Run `my-agent-browser snap <pageId>` for fresh UIDs |
+| `wait-for` times out when text looks visible | `snap` collapses whitespace, whereas DOM text preserves newlines/multiple spaces (case-sensitive) | Pass a shorter distinctive substring to `wait-for` |
+| `press` cannot select option in `<select>` on macOS | macOS renders native `<select>` menus outside DOM keyboard routing | Use `fill <pageId> <uid> "<value>"` or `eval` setting `.value` and dispatching `change` |
+| Browser hangs or times out on huge pages | Heavy DOM (editors, large tables, long chats) | Save snapshot to disk (`snap <pageId> /tmp/page.txt`) and read slices with `tail` / `grep`; keep `--include-snapshot` off |
+| Chrome fails to start in Docker / Linux | Sandbox or missing display | Ensure `"headless": true` and add `"--no-sandbox"` to `browser.extraArgs` if running in a container |
+| Bot / anti-automation block | Usually exit IP, WebGL renderer, or `HeadlessChrome` UA | Route via `browser.proxy`, verify WebGL renderer, or `restart --headed` — see [anti-detection.md](anti-detection.md) |
 
-The browser has no open tabs. Create one:
-```
-new_page { url: "about:blank" }
-```
+## Timeouts & In-Flight Actions
 
-### "Required at pageId" / invalid arguments for page-scoped tools
+- Default client RPC timeout is `65000ms` (automatically extended when `--timeout` / `--timeout-ms` is larger, or override via `--rpc-timeout-ms <ms>`).
+- **Timeout is not rollback**: If a mutating command (`click`, `batch`, `eval`) times out, the browser action may still finish settling. **Never blindly resend a mutation** — run `my-agent-browser snap <pageId>` to verify page state first.
 
-chrome-devtools-mcp 1.8+ requires `pageId` on `click`, `fill`, `take_snapshot`,
-`navigate_page`, `evaluate_script`, `wait_for`, and other page-scoped tools.
-Call `list_pages` or `new_page` first and pass that id. `select_page` does not
-remove the requirement.
+## Batch (`run_actions`) Diagnostics
 
-Do not add `--no-page-id-routing` unless you intentionally want selected-page
-fallback.
-
-### Click/fill does nothing or targets wrong element
-
-The page changed since your last snapshot. UIDs are tied to the DOM state at
-snapshot time. Solution: `take_snapshot { pageId }` again and use the fresh UIDs.
-
-### Element not visible in snapshot
-
-Possible causes:
-- Element is below the fold (scroll first)
-- Element is inside an iframe (not captured by default)
-- Element is dynamically loaded (use `wait_for` first)
-
-Try `evaluate_script { pageId, function: "() => (document.querySelector('selector').textContent)" }` to verify the element exists.
-
-### Timeout on `wait_for`
-
-The expected text never appeared. Check current page state with `take_snapshot { pageId }`
-to see what's actually on the page. Common causes:
-- Navigation failed silently
-- Page requires JavaScript that didn't execute
-- Text is in a different case or has extra whitespace
-
-### Chrome not starting
-
-Check:
-1. Is Chrome/Chromium installed? (`which google-chrome`)
-2. Is the CDP port already in use? (`curl http://127.0.0.1:39813/json/version` — matches `debuggingPort` in config)
-3. On Linux without display: set `"headless": true` in config
-4. On WSL/containers: add `"--no-sandbox"` to `extraArgs`
-
-### MCP server connection failed
-
-The `start-mcp.js` wrapper couldn't launch chrome-devtools-mcp. Check:
-1. Is `chrome-devtools-mcp` installed? (`chrome-devtools-mcp --version`)
-2. If not: `npm install -g chrome-devtools-mcp@1.12.0`
-3. Is Node.js 20+ available? (`node --version`)
-
-### Page loads but snapshot is empty or minimal
-
-Some pages render content via JavaScript after initial load. Use:
-```
-wait_for { pageId, text: ["expected content"] }
-```
-before taking the snapshot.
-
-### Anti-detection / bot detection
-
-Check in this order — Chrome flags are rarely the cause:
-
-1. **Exit IP and request rate.** Route through `browser.proxy` and slow down.
-2. **WebGL renderer.** Run `evaluate_script` with
-   `() => { const gl = document.createElement('canvas').getContext('webgl'); const d = gl.getExtension('WEBGL_debug_renderer_info'); return gl.getParameter(d.UNMASKED_RENDERER_WEBGL); }`.
-   A `SwiftShader` string, or a `null` context, is a strong tell. Fix with
-   `--ignore-gpu-blocklist`, and drop `--disable-gpu` if you have it.
-3. **Headless.** `headless: false` for sites that screen aggressively.
-
-Full measurements and the flag-by-flag verdict: [anti-detection.md](anti-detection.md).
-
-Note that `--disable-blink-features=AutomationControlled` is **not** the fix it is
-usually claimed to be here: nothing in this skill sets `navigator.webdriver` in the
-first place, and the flag costs ~52px of viewport to Chrome's warning bar.
-
-### Chrome shows "You are using an unsupported command-line flag"
-
-Expected whenever `extraArgs` contains a flag on Chrome's internal bad-flags list —
-`--disable-blink-features` and `--no-sandbox` are the common ones. The flag still
-works; the bar is a disclaimer, not an error.
-
-It does cost about 52px of viewport height, so a `1366x768` window renders at
-`1366x629`. Remove the flag (see above — you probably do not need it), or add
-`--test-type` to suppress the bar. `--disable-infobars` has not worked for years.
-
-### Large DOM pages cause memory overflow / browser crash
-
-Pages with many DOM nodes (e.g., rich-text editors with 200+ paragraphs, long tables, chat histories) can crash the browser or hang the agent when you use `includeSnapshot: true` on interactions or `wait_for`.
-
-**Root cause**: The snapshot serializes the entire accessibility tree. On a page with thousands of nodes, this produces a massive payload that exceeds memory limits.
-
-**Symptoms**:
-- Browser becomes unresponsive after `click { pageId, uid, includeSnapshot: true }`
-- `wait_for` hangs indefinitely on a page that clearly has the text
-- Agent reports "browser disconnected" or "target closed"
-- Repeated timeouts after injecting content into an editor
-
-**Solution — file-based snapshots**:
-
-1. Always use `includeSnapshot: false` (or omit it) for `click`, `fill`, `hover` on heavy pages
-2. When you need to read page state, save the snapshot to a file instead of returning it inline:
-   ```
-   take_snapshot { pageId, filePath: "/tmp/page-state.txt" }
-   ```
-3. Then read only the portion you need (dialogs and modals are typically at the end):
-   ```bash
-   tail -100 /tmp/page-state.txt
-   ```
-4. Close unrelated tabs before working with heavy pages — each tab holds its DOM in memory
-
-**When does this typically happen?**
-- Rich-text/WYSIWYG editors (ProseMirror, TipTap, CKEditor, Quill) after injecting long content
-- Admin dashboards with large data tables
-- Chat/messaging apps with long conversation history
-- Any page where you've injected content via `evaluate_script` that creates many DOM nodes
-
-**Prevention**: If you know the page will be heavy (e.g., you're about to inject a 2000-word article into an editor), switch to the file-based snapshot workflow proactively — don't wait for the crash.
-
-### Using a proxy
-
-Set in config (`~/.config/agent-skills/my-agent-browser/config.json`):
-```json
-{
-  "browser": {
-    "proxy": "http://127.0.0.1:3067"
-  }
-}
-```
-
-Restart the agent session for config changes to take effect.
-
-## Batch actions
-
-- Missing `run_actions`: run `--doctor --json`. Install wrapper 1.5.0 and tested MCP
-  1.12.0, enable `mcp.batchActions`, remove slim/disabled pageId routing if applicable,
-  and restart the MCP session. Skill installation does not update the MCP dependency.
-- `rejected` / `dispatched: 0`: fix the plan shape or missing upstream capabilities;
-  no requested action ran. A bad later argument rejects the whole plan up front.
-- `interrupted`: a dialog/reconnect or potentially partial fill_form crossed a page
-  boundary. Observe, handle the dialog explicitly if needed, then plan remaining work.
-- `unknown` / `settling: true`: the action may still execute. Do not resend it. Wait
-  for upstream settlement; if stuck, restart the MCP session and inspect before continuing.
-- `missing_boundary_signals`: the current action may have run but structured signals
-  are absent. Stop and inspect; verify the tested upstream version/config and restart.
-- `snapshot.status: failed` with completed steps: do not repeat those actions. Read
-  the page using a separate snapshot, preferably file-backed for heavy pages.
-
-The full contract is in [batch-actions.md](batch-actions.md).
+- `status: "rejected"` (`dispatched: 0`): Parameter shape failed validation before any browser action ran.
+- `status: "stopped"`, step `interrupted`: A JS dialog opened (`dialog <pageId> accept`), browser reconnected, or `fill_form` hit a navigation mid-form.
+- `status: "stopped"`, step `unknown` (`settling: true`): Step timed out or disconnected; wait for settlement and inspect with `snap` before continuing.
