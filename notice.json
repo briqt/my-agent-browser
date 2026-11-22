@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "latest_version": "2.0.0",
-  "release_url": "https://github.com/briqt/my-agent-browser/releases/tag/v2.0.0",
-  "notice_id": "v2.0.0-cli-migration",
-  "notice": "v2.0 已升级为独立 CLI（内置 chrome-devtools-mcp 1.13.0，不再使用 MCP）：请运行 npm i -g github:briqt/my-agent-browser --install-links 安装 CLI，运行 npx skills add briqt/my-agent-browser -g -y 更新 Skill，并在当前 Agent 的 MCP 配置中移除旧的 start-mcp.js 项。"
+  "latest_version": "2.1.0",
+  "release_url": "https://github.com/briqt/my-agent-browser/releases/tag/v2.1.0",
+  "notice_id": "v2.1.0-cli-streamline",
+  "notice": "v2.1.0 精简配置（移除 mcp.* 与 browser.lazyStart）、新建标签页默认强制后台打开、移除 MCP 残留 batch、开箱默认全开 50 个上游 DevTools 工具，并新增 open --raw / shot --raw / config show 与离线帮助。运行 npm i -g github:briqt/my-agent-browser --install-links 与 npx skills add briqt/my-agent-browser -g -y 升级。"
 }
