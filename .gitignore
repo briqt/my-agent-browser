@@ -4,4 +4,3 @@
 node_modules/
 *.user-data/
 state.json
-/AGENTS.md
