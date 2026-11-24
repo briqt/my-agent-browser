@@ -94,4 +94,4 @@ npx skills add briqt/my-agent-browser -g -y
 
 ## Community
 
-Shared on [LINUX DO](https://linux.do/t/topic/2451355)
+[学 AI，上 Linux DO](https://linux.do/)
