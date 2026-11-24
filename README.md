@@ -95,3 +95,7 @@ npx skills add briqt/my-agent-browser -g -y
 ## Community
 
 [学 AI，上 Linux DO](https://linux.do/)
+
+## License
+
+[MIT](LICENSE)
